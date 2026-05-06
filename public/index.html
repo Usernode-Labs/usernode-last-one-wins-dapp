@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Last One Wins</title>
+  <script src="/usernode-bridge.js"></script>
+  <script src="/usernode-usernames.js"></script>
+  <script src="/usernode-loading.js"></script>
+  <script>UsernodeLoading.init({ appName: "Last One Wins", streamKey: "lastwin" });</script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      color-scheme: light dark;
+      --bg: #0b0f16; --fg: #e7edf7; --muted: #a8b3c7;
+      --card: #141b26; --border: rgba(255,255,255,0.12);
+      --accent: #6ea8fe; --danger: #ff6b6b; --ok: #5dd39e;
+      --gold: #facc15; --gold-dim: rgba(250,204,21,0.15);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f8fb; --fg: #0b1220; --muted: #4b5568;
+        --card: #ffffff; --border: rgba(15,23,42,0.12);
+        --accent: #2563eb; --danger: #c81e1e; --ok: #0f766e;
+        --gold: #ca8a04; --gold-dim: rgba(202,138,4,0.12);
+      }
+    }
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
+        Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg); color: var(--fg);
+      display: flex; flex-direction: column;
+      height: 100vh; height: 100dvh; overflow: hidden;
+    }
+
+    /* Three-zone layout */
+    .topBar {
+      flex: 0 0 auto; padding: 12px 16px;
+      border-bottom: 1px solid var(--border); text-align: center;
+      background: var(--card);
+    }
+    .topBar .round { font-size: 14px; font-weight: 600; }
+    .header-pill {
+      padding: 3px 10px; border-radius: 12px; font-size: 12px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--accent); font-weight: 500; cursor: pointer;
+      max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .header-pill:hover { border-color: var(--accent); background: rgba(110,168,254,0.08); }
+    .header-icon {
+      width: 28px; height: 28px; border-radius: 8px; font-size: 13px; font-weight: 700;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--muted); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .header-icon:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Info overlay */
+    .info-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+    }
+    .info-overlay.open { display: flex; }
+    .info-content {
+      padding: 24px;
+      max-width: 380px;
+      width: 90%;
+      max-height: 80vh;
+      max-height: 80dvh;
+      overflow-y: auto;
+      background: var(--card);
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--fg);
+    }
+    .info-content h2 { margin: 0 0 10px; font-size: 17px; font-weight: 700; }
+    .info-content p { margin: 0 0 8px; }
+    .info-content ul { margin: 0 0 8px; padding-left: 18px; }
+    .info-content li { margin-bottom: 4px; }
+    .info-content .muted { color: var(--muted); font-size: 12px; }
+
+    .scrollArea {
+      flex: 1 1 auto; overflow-y: auto; min-height: 0;
+      padding: 0 16px;
+    }
+    .bottomBar {
+      flex: 0 0 auto; padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+      background: var(--card);
+    }
+
+    /* Hero countdown */
+    .hero { text-align: center; padding: 20px 0 16px; }
+    .countdown {
+      font-size: 48px; font-weight: 800; letter-spacing: -1px;
+      font-variant-numeric: tabular-nums; color: var(--fg);
+      line-height: 1.1;
+    }
+    .countdown.expired { color: var(--gold); }
+    .countdown.waiting { color: var(--muted); font-size: 24px; font-weight: 500; }
+    .hero-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
+    .pot {
+      font-size: 40px; font-weight: 800; margin: 12px 0 2px;
+      color: var(--gold); line-height: 1.1;
+    }
+    .pot-label { font-size: 13px; color: var(--muted); }
+    .hero-copy { font-size: 13px; color: var(--muted); margin-top: 8px; }
+    .personal-status {
+      margin-top: 14px; font-size: 14px; font-weight: 500; min-height: 20px;
+    }
+    .personal-status.leading { color: var(--ok); }
+    .personal-status.trailing { color: var(--accent); }
+    .personal-status.won { color: var(--gold); }
+
+    hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+
+    /* Send form (horizontal row in footer) */
+    .section-title { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
+    .send-row {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .send-row input {
+      width: 80px; flex: 0 0 80px;
+      padding: 10px 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: transparent;
+      color: var(--fg); font-size: 16px; outline: none;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .send-row input:focus { border-color: var(--accent); }
+    .btn {
+      flex: 1 1 auto;
+      display: inline-block; padding: 10px 16px; border-radius: 10px;
+      border: 1px solid var(--accent); background: var(--accent);
+      color: #fff; font-size: 15px; font-weight: 600;
+      cursor: pointer; text-align: center; transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled, .btn[aria-disabled="true"] {
+      opacity: 0.45; cursor: not-allowed; pointer-events: none;
+    }
+    .error-msg {
+      font-size: 13px; color: var(--danger); margin-top: 4px;
+      min-height: 0;
+    }
+    .error-msg:empty { display: none; }
+
+    /* Progress bar */
+    .tx-progress { width: 100%; margin: 6px 0 2px; }
+    .tx-progress .tx-progress-track {
+      width: 100%; height: 6px; border-radius: 3px;
+      background: var(--border); overflow: hidden;
+    }
+    .tx-progress .tx-progress-fill {
+      height: 100%; width: 0%; border-radius: 3px;
+      background: var(--accent);
+      transition: width 0.4s ease-out, background-color 0.4s ease;
+    }
+    .tx-progress .tx-progress-fill.ok { background: #6ef0a8; }
+    .tx-progress .tx-progress-fill.warn { background: #e6a817; }
+    .tx-progress .tx-progress-fill.err { background: var(--danger); }
+    .tx-progress .tx-progress-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .tx-progress .tx-progress-label.warn { color: #e6a817; }
+    .tx-progress .tx-progress-label.err { color: var(--danger); }
+    .tx-progress.hide { display: none; }
+
+    /* History */
+    .entry-list { display: grid; gap: 6px; margin-top: 10px; }
+    .entry-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      border: 1px solid var(--border);
+    }
+    .entry-item .entry-from { color: var(--muted); font-size: 12px; }
+    .entry-item .entry-amount { font-weight: 600; white-space: nowrap; }
+    .entry-item .entry-time { font-size: 11px; color: var(--muted); }
+    .entry-item.payout {
+      background: var(--gold-dim); border-color: var(--gold);
+    }
+    .entry-item.payout .entry-amount { color: var(--gold); }
+
+    .empty-state {
+      text-align: center; color: var(--muted); padding: 20px 0;
+      font-size: 14px;
+    }
+
+    /* Status */
+    .status-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 11px; color: var(--muted); margin-top: 6px;
+    }
+    .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 4px; vertical-align: middle;
+    }
+    .status-dot.ok { background: var(--ok); }
+    .status-dot.err { background: var(--danger); }
+    .status-dot.pending { background: var(--gold); }
+
+    /* Username edit form */
+    .inputAffix {
+      display: flex; align-items: center;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: transparent;
+    }
+    .inputAffix:focus-within { border-color: var(--accent); }
+    .inputAffixField {
+      flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+      padding: 10px 12px; border: 0; outline: 0;
+      background: transparent; color: var(--fg); font-size: 16px;
+    }
+    .inputAffixSuffix {
+      padding: 0 12px 0 0; color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      white-space: nowrap; font-size: 14px;
+    }
+    .btn-sm {
+      display: inline-block; padding: 8px 14px; border-radius: 8px;
+      border: 1px solid var(--accent); background: var(--accent);
+      color: #fff; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn-sm:hover { opacity: 0.9; }
+    .btn-sm:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-sm.secondary { background: transparent; color: var(--accent); }
+
+    /* Bottom sheet (matches opinion-market pattern) */
+    .bottomSheet-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      pointer-events: none;
+    }
+    .bottomSheet-backdrop.open { opacity: 1; pointer-events: auto; }
+    .bottomSheet {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0;
+      padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+      z-index: 101;
+      transform: translateY(100%);
+      transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+      max-width: 500px;
+      margin: 0 auto;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+    }
+    .bottomSheet.open { transform: translateY(0); }
+    .bottomSheet-handle {
+      width: 36px; height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      margin: 0 auto 16px;
+    }
+    .bottomSheet-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .bottomSheet-title { font-weight: 600; font-size: 16px; }
+    .bottomSheet-action {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .bottomSheet-action:hover { opacity: 0.9; }
+    .bottomSheet-action:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bottomSheet-cancel {
+      width: 100%;
+      padding: 10px;
+      margin-top: 8px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .bottomSheet-cancel:hover { color: var(--fg); border-color: var(--fg); }
+    .bottomSheet-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .hide { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="topBar">
+    <div style="display:flex;justify-content:center;align-items:center;position:relative;">
+      <div class="round" id="roundLabel">Round 1</div>
+      <div style="position:absolute;right:0;display:flex;align-items:center;gap:6px;">
+        <button class="header-pill" id="usernamePill" type="button" title="Change username"><span id="usernameDisplay">...</span></button>
+        <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Bottom sheet username editor -->
+  <div class="bottomSheet-backdrop" id="usernameBackdrop"></div>
+  <div class="bottomSheet" id="usernameSheet">
+    <div class="bottomSheet-handle"></div>
+    <div class="bottomSheet-header">
+      <span class="bottomSheet-title">Set your display name</span>
+    </div>
+    <div class="inputAffix">
+      <input id="usernameInput" class="inputAffixField" maxlength="24" placeholder="username" />
+      <span id="usernameSuffix" class="inputAffixSuffix">_??????</span>
+    </div>
+    <button class="bottomSheet-action" id="saveUsernameBtn" type="button" style="margin-top:12px;">Save</button>
+    <button class="bottomSheet-cancel" id="cancelUsernameBtn" type="button">Cancel</button>
+    <div class="tx-progress hide" id="usernameTxProgress" style="margin-top:8px;">
+      <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
+      <div class="tx-progress-label">Setting username...</div>
+    </div>
+  </div>
+
+  <div class="info-overlay" id="infoOverlay">
+    <div class="info-content" id="infoContent">
+      <h2>Last One Wins</h2>
+      <p>Last person to enter before time runs out wins everything.</p>
+      <ul>
+        <li>Send any amount of tokens to enter the game</li>
+        <li>Every entry resets the countdown and grows the pot</li>
+        <li>When the timer hits zero, the last person to enter wins the entire pot</li>
+        <li>A new round starts automatically &mdash; jump back in!</li>
+      </ul>
+      <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
+      <p class="muted">All game state lives on the Usernode blockchain. The server tracks the timer and sends automated payouts. Tap anywhere outside this panel to close.</p>
+    </div>
+  </div>
+
+  <!-- Scrollable content -->
+  <div class="scrollArea">
+    <div class="hero">
+      <div class="countdown waiting" id="countdown">Waiting for first entry...</div>
+      <div class="hero-label" id="countdownLabel"></div>
+      <div class="hero-copy" id="mechanicLabel">Each entry resets the timer &mdash; last one wins</div>
+      <div class="pot" id="potDisplay">0</div>
+      <div class="pot-label">tokens in the pot</div>
+      <div class="hero-copy">Every entry increases the prize</div>
+      <div class="personal-status" id="personalStatus"></div>
+    </div>
+
+    <hr />
+
+    <div class="section-title">Recent Activity</div>
+    <div class="entry-list" id="entryList">
+      <div class="empty-state">No entries yet</div>
+    </div>
+  </div>
+
+  <!-- Footer: send form + status -->
+  <footer class="bottomBar">
+    <div class="send-row">
+      <input id="amountInput" type="number" min="1" max="1000" value="1" placeholder="Amt" />
+      <button class="btn" id="sendBtn">Enter Now</button>
+    </div>
+    <div class="error-msg" id="errorMsg"></div>
+    <div class="tx-progress hide" id="txProgress">
+      <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
+      <div class="tx-progress-label">Sending...</div>
+    </div>
+    <div class="status-bar">
+      <span><span class="status-dot pending" id="statusDot"></span><span id="statusText">connecting...</span></span>
+      <span id="myAddress"></span>
+    </div>
+  </footer>
+
+  <script>
+  (function () {
+    /* ── Config ─────────────────────────────────────────────── */
+    const GAME_POLL_MS = 4000;
+    const TX_SEND_OPTS = { timeoutMs: 180000, pollIntervalMs: 1500 };
+    const EXPLORER_BASE = window.location.origin + "/explorer-api";
+
+    /* ── DOM refs ───────────────────────────────────────────── */
+    const roundLabel = document.getElementById("roundLabel");
+    const countdownEl = document.getElementById("countdown");
+    const countdownLabel = document.getElementById("countdownLabel");
+    const potDisplay = document.getElementById("potDisplay");
+    const personalStatusEl = document.getElementById("personalStatus");
+    const mechanicLabelEl = document.getElementById("mechanicLabel");
+    const amountInput = document.getElementById("amountInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const errorMsg = document.getElementById("errorMsg");
+    const txProgressEl = document.getElementById("txProgress");
+    const entryList = document.getElementById("entryList");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const myAddressEl = document.getElementById("myAddress");
+    const usernamePill = document.getElementById("usernamePill");
+    const usernameDisplay = document.getElementById("usernameDisplay");
+    const usernameSheet = document.getElementById("usernameSheet");
+    const usernameBackdrop = document.getElementById("usernameBackdrop");
+    const usernameInput = document.getElementById("usernameInput");
+    const usernameSuffixEl = document.getElementById("usernameSuffix");
+    const saveUsernameBtn = document.getElementById("saveUsernameBtn");
+    const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
+    const usernameTxProgress = document.getElementById("usernameTxProgress");
+
+    /* ── State ──────────────────────────────────────────────── */
+    let sending = false;
+    let gameData = null;
+    let myAddress = null;
+    let appPubkey = null;
+    let myUsername = null;
+    let usernameMap = {};
+
+    /* ── Helpers ────────────────────────────────────────────── */
+    function truncate(s, n) {
+      if (!s || s.length <= n) return s || "";
+      const h = Math.floor((n - 3) / 2);
+      return s.slice(0, h) + "..." + s.slice(-h);
+    }
+
+    function formatCountdown(ms) {
+      if (ms <= 0) return "00:00:00";
+      const totalSec = Math.floor(ms / 1000);
+      const d = Math.floor(totalSec / 86400);
+      const h = Math.floor((totalSec % 86400) / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
+      return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    function formatTime(ms) {
+      if (!ms) return "";
+      const d = new Date(ms);
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function showError(msg) {
+      errorMsg.textContent = msg || "";
+    }
+
+    /* ── Username helpers ────────────────────────────────────── */
+    function last6(addr) { return addr ? addr.slice(-6) : ""; }
+    function usernameSuffix(addr) { return addr ? "_" + last6(addr) : "_??????"; }
+    function defaultUsername(addr) { return addr ? "user_" + last6(addr) : "user"; }
+
+    function displayName(pubkey) {
+      if (!pubkey) return "???";
+      if (window.UsernodeUsernames) {
+        const global = UsernodeUsernames.getUsernameSync(pubkey);
+        if (global && global !== UsernodeUsernames.defaultUsername(pubkey)) return global;
+      }
+      if (usernameMap[pubkey]) return usernameMap[pubkey];
+      return defaultUsername(pubkey);
+    }
+
+    function normalizeUsername(raw, addr) {
+      const suffix = usernameSuffix(addr);
+      const maxBase = Math.max(1, 24 - suffix.length);
+      let v = String(raw || "").trim().replace(/[^\w-]/g, "");
+      if (!v) return defaultUsername(addr);
+      if (v.endsWith(suffix)) v = v.slice(0, -suffix.length);
+      v = v.replace(/_[A-Za-z0-9]{6}$/, "");
+      return (v.slice(0, maxBase) || "user") + suffix;
+    }
+
+    function setUsernameUi(name) {
+      usernameDisplay.textContent = name || defaultUsername(myAddress);
+    }
+
+    /* ── Progress bar (reusable for any .tx-progress container) ── */
+    const TX_PB_EXPECTED_S = 60, TX_PB_WARN_S = 120, TX_PB_ERR_S = 180;
+    let _pbRaf = null, _pbStart = 0, _pbTarget = null;
+
+    function pbPercent(s) {
+      if (s <= TX_PB_EXPECTED_S) { const t = s / TX_PB_EXPECTED_S; return 95 * (1 - Math.pow(1 - t, 3)); }
+      return 95 + 5 * (1 - Math.exp(-(s - TX_PB_EXPECTED_S) / 120));
+    }
+    function pbApply(el, pct, s, verb) {
+      if (!el) return;
+      const fill = el.querySelector(".tx-progress-fill");
+      const label = el.querySelector(".tx-progress-label");
+      if (fill) { fill.style.width = pct + "%"; fill.className = "tx-progress-fill" + (s >= TX_PB_ERR_S ? " err" : s >= TX_PB_WARN_S ? " warn" : ""); }
+      if (label) {
+        if (s >= TX_PB_ERR_S) { label.textContent = "Taking longer than it should; check Discord"; label.className = "tx-progress-label err"; }
+        else if (s >= TX_PB_WARN_S) { label.textContent = "Taking longer than expected"; label.className = "tx-progress-label warn"; }
+        else { label.textContent = verb || "Sending..."; label.className = "tx-progress-label"; }
+      }
+    }
+    function startProgressBar(el, verb) {
+      stopProgressBar();
+      _pbTarget = el || txProgressEl;
+      _pbTarget.classList.remove("hide");
+      const f = _pbTarget.querySelector(".tx-progress-fill"), l = _pbTarget.querySelector(".tx-progress-label");
+      if (f) { f.style.width = "0%"; f.className = "tx-progress-fill"; }
+      if (l) { l.textContent = verb || "Sending..."; l.className = "tx-progress-label"; }
+      _pbStart = performance.now();
+      (function tick() { const s = (performance.now() - _pbStart) / 1000; pbApply(_pbTarget, pbPercent(s), s, verb); _pbRaf = requestAnimationFrame(tick); })();
+    }
+    function completeProgressBar(el) {
+      stopProgressBar();
+      const t = el || _pbTarget || txProgressEl;
+      const f = t.querySelector(".tx-progress-fill"), l = t.querySelector(".tx-progress-label");
+      if (f) { f.className = "tx-progress-fill ok"; f.style.width = "100%"; }
+      if (l) { l.textContent = "Confirmed!"; l.className = "tx-progress-label"; }
+      setTimeout(() => t.classList.add("hide"), 1200);
+    }
+    function stopProgressBar() { if (_pbRaf) { cancelAnimationFrame(_pbRaf); _pbRaf = null; } }
+
+    function setSending(v, txSucceeded) {
+      sending = !!v;
+      sendBtn.disabled = !!v;
+      amountInput.disabled = !!v;
+      saveUsernameBtn.disabled = !!v;
+      if (v) startProgressBar();
+      else if (txSucceeded) completeProgressBar();
+      else { stopProgressBar(); txProgressEl.classList.add("hide"); }
+    }
+
+    /* ── Render ─────────────────────────────────────────────── */
+    function render() {
+      if (!gameData) return;
+
+      if (gameData.usernames) usernameMap = gameData.usernames;
+      // Import server-provided legacy names as fallback for global identity
+      if (window.UsernodeUsernames) UsernodeUsernames.importLegacy(usernameMap);
+
+      // Update own username (global identity takes precedence)
+      if (myAddress) {
+        const globalName = window.UsernodeUsernames
+          ? UsernodeUsernames.getUsernameSync(myAddress) : null;
+        const serverName = usernameMap[myAddress];
+        const best = (globalName && globalName !== defaultUsername(myAddress))
+          ? globalName : serverName;
+        if (best && best !== myUsername) {
+          myUsername = best;
+          setUsernameUi(myUsername);
+        }
+      }
+
+      roundLabel.textContent = "Round " + gameData.roundNumber;
+      potDisplay.textContent = String(gameData.potBalance);
+
+      const isLeading = myAddress && gameData.lastSender === myAddress;
+
+      if (!gameData.lastSender) {
+        countdownEl.textContent = "Waiting for first entry...";
+        countdownEl.className = "countdown waiting";
+        countdownLabel.textContent = "";
+        mechanicLabelEl.textContent = "";
+        personalStatusEl.textContent = "";
+        personalStatusEl.className = "personal-status";
+        sendBtn.textContent = "Enter Now";
+      } else if (gameData.timerExpired) {
+        countdownEl.textContent = "TIMER EXPIRED";
+        countdownEl.className = "countdown expired";
+        countdownLabel.textContent = gameData.payoutInProgress ? "Payout in progress..." : "Payout imminent!";
+        mechanicLabelEl.textContent = "";
+        sendBtn.textContent = "Enter Now";
+        if (isLeading) {
+          personalStatusEl.textContent = "You won! Payout incoming...";
+          personalStatusEl.className = "personal-status won";
+        } else {
+          personalStatusEl.textContent = displayName(gameData.lastSender) + " won this round!";
+          personalStatusEl.className = "personal-status won";
+        }
+      } else {
+        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
+        countdownEl.className = "countdown";
+        countdownLabel.textContent = "until pot is claimed";
+        mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
+        if (isLeading) {
+          personalStatusEl.textContent = "You\u2019re the last entry \u2014 hold until time runs out to win!";
+          personalStatusEl.className = "personal-status leading";
+          sendBtn.textContent = "Enter Again";
+        } else {
+          personalStatusEl.textContent = displayName(gameData.lastSender) + " is in the lead \u2014 enter now!";
+          personalStatusEl.className = "personal-status trailing";
+          sendBtn.textContent = "Enter Now";
+        }
+      }
+
+      entryList.innerHTML = "";
+      const items = [];
+
+      const chronoEntries = (gameData.entries || []).slice().reverse();
+      const entryLabels = {};
+      const seenSenders = new Set();
+      let prevEntrySender = null;
+      for (const e of chronoEntries) {
+        if (prevEntrySender === e.from) {
+          entryLabels[e.txId] = "entered again";
+        } else if (seenSenders.has(e.from)) {
+          entryLabels[e.txId] = "retook the lead";
+        } else {
+          entryLabels[e.txId] = "entered \u2014 timer reset";
+        }
+        seenSenders.add(e.from);
+        prevEntrySender = e.from;
+      }
+
+      for (const e of (gameData.entries || [])) {
+        items.push({ type: "entry", from: e.from, amount: e.amount, ts: e.ts, txId: e.txId });
+      }
+      for (const r of (gameData.pastRounds || [])) {
+        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round });
+      }
+      items.sort((a, b) => b.ts - a.ts);
+
+      if (items.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "No entries yet \u2014 be the first!";
+        entryList.appendChild(empty);
+        return;
+      }
+
+      for (const item of items.slice(0, 30)) {
+        const el = document.createElement("div");
+        el.className = "entry-item" + (item.type === "payout" ? " payout" : "");
+
+        const left = document.createElement("div");
+        const fromEl = document.createElement("div");
+        fromEl.className = "entry-from";
+        const name = displayName(item.from);
+        const isSelf = myAddress && item.from === myAddress;
+        if (item.type === "payout") {
+          fromEl.textContent = "Round " + item.round + " won by " + name;
+        } else {
+          fromEl.textContent = name + " " + (entryLabels[item.txId] || "entered \u2014 timer reset");
+          if (isSelf) fromEl.style.color = "var(--accent)";
+        }
+        const timeEl = document.createElement("div");
+        timeEl.className = "entry-time";
+        timeEl.textContent = formatTime(item.ts);
+        left.appendChild(fromEl);
+        left.appendChild(timeEl);
+
+        const amtEl = document.createElement("div");
+        amtEl.className = "entry-amount";
+        amtEl.textContent = (item.type === "payout" ? "+" : "") + item.amount;
+
+        el.appendChild(left);
+        el.appendChild(amtEl);
+        entryList.appendChild(el);
+      }
+    }
+
+    /* ── Countdown tick (1s local updates between polls) ───── */
+    setInterval(() => {
+      if (!gameData || !gameData.lastSender || gameData.timerExpired) return;
+      if (gameData.timeRemainingMs != null && gameData.timeRemainingMs > 0) {
+        gameData.timeRemainingMs = Math.max(0, gameData.timeRemainingMs - 1000);
+        if (gameData.timeRemainingMs <= 0) gameData.timerExpired = true;
+        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
+        if (gameData.timerExpired) {
+          countdownEl.textContent = "TIMER EXPIRED";
+          countdownEl.className = "countdown expired";
+          countdownLabel.textContent = "Payout imminent!";
+          mechanicLabelEl.textContent = "";
+          if (myAddress && gameData.lastSender === myAddress) {
+            personalStatusEl.textContent = "You won! Payout incoming...";
+            personalStatusEl.className = "personal-status won";
+          } else {
+            personalStatusEl.textContent = displayName(gameData.lastSender) + " won this round!";
+            personalStatusEl.className = "personal-status won";
+          }
+        }
+      }
+    }, 1000);
+
+    /* ── Game state polling ─────────────────────────────────── */
+    async function pollGameState() {
+      try {
+        if (window.UsernodeUsernames) await UsernodeUsernames.refresh();
+        const resp = await fetch("/__game/state");
+        if (!resp.ok) throw new Error("status " + resp.status);
+        gameData = await resp.json();
+        if (!appPubkey && gameData.appPubkey) {
+          appPubkey = gameData.appPubkey;
+          // Route the bridge's inclusion polling through our server-side
+          // cache (one shared chain poll behind /__game/state) instead of
+          // having every client re-poll the explorer. See AGENTS.md §7.
+          window.usernode = window.usernode || {};
+          window.usernode.serverCacheUrl = "/__usernode/cache/" + appPubkey;
+        }
+        render();
+        statusDot.className = "status-dot ok";
+        statusText.textContent = "connected";
+      } catch (e) {
+        statusDot.className = "status-dot err";
+        statusText.textContent = "connection error";
+      }
+    }
+
+    /* ── Send handler ──────────────────────────────────────── */
+    sendBtn.addEventListener("click", async () => {
+      if (sending) return;
+      showError("");
+
+      const amount = parseInt(amountInput.value, 10);
+      if (!amount || amount < 1) {
+        showError("Enter an amount of at least 1.");
+        return;
+      }
+      if (amount > 1000) {
+        showError("Maximum entry is 1000 tokens.");
+        return;
+      }
+
+      if (!appPubkey) {
+        showError("Game not loaded yet — please wait.");
+        return;
+      }
+
+      const memo = JSON.stringify({ app: "lastwin", type: "entry" });
+      if (memo.length > 1024) {
+        showError("Payload too large.");
+        return;
+      }
+
+      try {
+        setSending(true);
+        const prevPot = gameData ? gameData.potBalance : 0;
+        await window.sendTransaction(appPubkey, amount, memo, { ...TX_SEND_OPTS, confirmTitle: "Lock in your move", confirmSubtitle: "Send tokens to enter the game." });
+        setSending(false, true);
+        showError("");
+        for (let i = 0; i < 5; i++) {
+          await pollGameState();
+          if (gameData && gameData.potBalance !== prevPot) break;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (e) {
+        setSending(false, false);
+        showError("Send failed: " + (e.message || e));
+      }
+    });
+
+    /* ── Username flow ────────────────────────────────────────── */
+    function openUsernamePanel() {
+      if (sending) return;
+      const suffix = window.UsernodeUsernames
+        ? UsernodeUsernames.usernameSuffix(myAddress) : usernameSuffix(myAddress);
+      const full = myUsername || defaultUsername(myAddress);
+      const base = full.endsWith(suffix) ? full.slice(0, -suffix.length) : full.replace(/_[A-Za-z0-9]{6}$/, "");
+      usernameInput.value = base || "user";
+      usernameSuffixEl.textContent = suffix;
+      usernameBackdrop.classList.add("open");
+      usernameSheet.classList.add("open");
+      document.body.style.overflow = "hidden";
+      setTimeout(() => { try { usernameInput.focus(); usernameInput.select(); } catch (_) {} }, 50);
+    }
+
+    function closeUsernamePanel() {
+      usernameBackdrop.classList.remove("open");
+      usernameSheet.classList.remove("open");
+      document.body.style.overflow = "";
+      usernameTxProgress.classList.add("hide");
+    }
+
+    usernamePill.addEventListener("click", () => {
+      if (usernameSheet.classList.contains("open")) closeUsernamePanel();
+      else openUsernamePanel();
+    });
+
+    usernameBackdrop.addEventListener("click", closeUsernamePanel);
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && usernameSheet.classList.contains("open")) closeUsernamePanel();
+    });
+
+    cancelUsernameBtn.addEventListener("click", closeUsernamePanel);
+
+    saveUsernameBtn.addEventListener("click", async () => {
+      if (sending) return;
+      const raw = usernameInput.value;
+      if (!raw || !String(raw).trim()) return;
+
+      try {
+        sending = true;
+        saveUsernameBtn.disabled = true;
+        cancelUsernameBtn.disabled = true;
+        sendBtn.disabled = true;
+        startProgressBar(usernameTxProgress, "Setting username...");
+
+        const value = await UsernodeUsernames.setUsername(raw);
+
+        myUsername = value;
+        setUsernameUi(myUsername);
+        completeProgressBar(usernameTxProgress);
+        setTimeout(closeUsernamePanel, 1200);
+        await pollGameState();
+      } catch (e) {
+        stopProgressBar();
+        usernameTxProgress.classList.add("hide");
+        showError("Username failed: " + (e.message || e));
+      } finally {
+        sending = false;
+        saveUsernameBtn.disabled = false;
+        cancelUsernameBtn.disabled = false;
+        sendBtn.disabled = false;
+      }
+    });
+
+    /* ── Init ──────────────────────────────────────────────── */
+    async function init() {
+      try {
+        myAddress = await window.getNodeAddress();
+        if (myAddress) {
+          myAddressEl.textContent = truncate(myAddress, 16);
+          setUsernameUi(defaultUsername(myAddress));
+          usernameSuffixEl.textContent = usernameSuffix(myAddress);
+        }
+      } catch (_) {}
+
+      const mockEnabled = window.usernode && typeof window.usernode.isMockEnabled === "function"
+        ? await window.usernode.isMockEnabled()
+        : false;
+
+      if (!mockEnabled) {
+        try {
+          const resp = await fetch(EXPLORER_BASE + "/active_chain");
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data && data.chain_id) {
+              window.usernode = window.usernode || {};
+              window.usernode.transactionsBaseUrl = EXPLORER_BASE + "/" + data.chain_id;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (window.UsernodeUsernames) {
+        try {
+          await UsernodeUsernames.init();
+          if (myAddress) {
+            const globalName = UsernodeUsernames.getUsernameSync(myAddress);
+            if (globalName && globalName !== defaultUsername(myAddress)) {
+              myUsername = globalName;
+              setUsernameUi(myUsername);
+            }
+          }
+        } catch (_) {}
+      }
+
+      await pollGameState();
+      setInterval(pollGameState, GAME_POLL_MS);
+
+      const infoToggle = document.getElementById("infoToggle");
+      const infoOverlay = document.getElementById("infoOverlay");
+      const infoContent = document.getElementById("infoContent");
+      if (infoToggle && infoOverlay) {
+        infoToggle.addEventListener("click", () => infoOverlay.classList.add("open"));
+        infoOverlay.addEventListener("click", (e) => {
+          if (!infoContent.contains(e.target)) {
+            infoOverlay.classList.remove("open");
+          }
+        });
+      }
+    }
+
+    init();
+  })();
+  </script>
+</body>
+</html>

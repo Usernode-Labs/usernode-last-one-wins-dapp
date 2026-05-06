@@ -1,0 +1,28 @@
+{
+  "secrets": [
+    {
+      "key": "APP_PUBKEY",
+      "description": "On-chain pot address that incoming entries are sent to and payouts are sent from. Generate with `usernode-cli account generate`; paste the `address` field here.",
+      "required": true,
+      "sensitive": false
+    },
+    {
+      "key": "APP_SECRET_KEY",
+      "description": "Secret key paired with APP_PUBKEY. Used by the payout signer to send the pot to the winner when the timer expires. Never logged or returned via the API.",
+      "required": true,
+      "sensitive": true
+    },
+    {
+      "key": "NODE_RPC_URL",
+      "description": "Sidecar usernode RPC endpoint. Defaults to the in-network node service.",
+      "required": false,
+      "default": "http://usernode-node:3000"
+    },
+    {
+      "key": "TIMER_DURATION_MS",
+      "description": "Countdown duration in milliseconds before the last sender is declared the winner. Defaults to 24h. Ignored in --local-dev (uses a fixed 2-minute timer).",
+      "required": false,
+      "default": "86400000"
+    }
+  ]
+}

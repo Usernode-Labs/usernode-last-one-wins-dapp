@@ -1,0 +1,14 @@
+{
+  "name": "usernode-last-one-wins-dapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Last One Wins — Usernode token game (last sender before the timer runs out wins the pot)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --local-dev"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
