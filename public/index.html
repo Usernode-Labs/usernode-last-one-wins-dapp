@@ -743,7 +743,7 @@
       try {
         setSending(true);
         const prevPot = gameData ? gameData.potBalance : 0;
-        await window.sendTransaction(appPubkey, amount, memo, { ...TX_SEND_OPTS, confirmTitle: "Lock in your move", confirmSubtitle: "Send tokens to enter the game." });
+        await window.sendTransaction(appPubkey, amount, memo, { ...TX_SEND_OPTS, confirmTitle: "Lock in your move", confirmSubtitle: "Last One Wins — Send tokens to enter the game." });
         setSending(false, true);
         showError("");
         for (let i = 0; i < 5; i++) {
