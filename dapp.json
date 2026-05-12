@@ -20,9 +20,9 @@
     },
     {
       "key": "TIMER_DURATION_MS",
-      "description": "Countdown duration in milliseconds before the last sender is declared the winner. Defaults to 24h. Ignored in --local-dev (uses a fixed 2-minute timer).",
+      "description": "Countdown duration in milliseconds before the last sender is declared the winner. Defaults to 8h. Ignored in --local-dev (uses a fixed 2-minute timer).",
       "required": false,
-      "default": "86400000"
+      "default": "28800000"
     }
   ]
 }

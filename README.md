@@ -1,7 +1,7 @@
 # Last One Wins
 
 A Usernode token game. Players send tokens to the pot address; if the
-configured timer (`TIMER_DURATION_MS`, default 24h) elapses without a
+configured timer (`TIMER_DURATION_MS`, default 8h) elapses without a
 new entry, the most recent sender wins the entire pot. The server-side
 process pays the winner via the sidecar `/wallet/send` RPC.
 
@@ -101,7 +101,7 @@ lost).
 | `APP_PUBKEY` | The pot's on-chain address (entries destination, payouts source). |
 | `APP_SECRET_KEY` | Used to sign outgoing `/wallet/send` calls (payouts and consolidations). |
 | `NODE_RPC_URL` | Sidecar URL. Default `http://usernode-node:3000` (compose internal). |
-| `TIMER_DURATION_MS` | Countdown duration in ms. Default 86400000 (24h). Ignored in `--local-dev` (uses 2 min). |
+| `TIMER_DURATION_MS` | Countdown duration in ms. Default 28800000 (8h). Ignored in `--local-dev` (uses 2 min). |
 | `PORT` | HTTP port (default 3000). |
 
 ## Origin
