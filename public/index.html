@@ -656,7 +656,12 @@
         return;
       }
 
-      for (const item of items.slice(0, 30)) {
+      const payouts = items.filter(i => i.type === "payout");
+      const entries = items.filter(i => i.type !== "payout");
+      const capped = entries.slice(0, Math.max(0, 30 - payouts.length)).concat(payouts);
+      capped.sort((a, b) => b.ts - a.ts);
+
+      for (const item of capped) {
         const el = document.createElement("div");
         el.className = "entry-item" + (item.type === "payout" ? " payout" : "");
 
