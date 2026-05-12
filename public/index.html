@@ -188,8 +188,27 @@
     .entry-item .entry-time { font-size: 11px; color: var(--muted); }
     .entry-item.payout {
       background: var(--gold-dim); border-color: var(--gold);
+      cursor: pointer; user-select: none;
     }
+    .entry-item.payout.no-entries { cursor: default; }
     .entry-item.payout .entry-amount { color: var(--gold); }
+    .entry-item.payout .chevron {
+      display: inline-block; font-size: 10px; margin-right: 4px;
+      transition: transform 0.2s; color: var(--gold);
+    }
+    .entry-item.payout.expanded .chevron { transform: rotate(90deg); }
+    .entry-item.payout.no-entries .chevron { display: none; }
+    .round-entries {
+      display: grid; gap: 4px; padding: 4px 0 4px 16px;
+    }
+    .round-entries .round-entry {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 10px; border-radius: 6px; font-size: 12px;
+      border: 1px solid var(--border); background: var(--bg);
+    }
+    .round-entries .entry-from { color: var(--muted); font-size: 11px; }
+    .round-entries .entry-amount { font-weight: 600; white-space: nowrap; font-size: 12px; }
+    .round-entries .entry-time { font-size: 10px; color: var(--muted); }
 
     .empty-state {
       text-align: center; color: var(--muted); padding: 20px 0;
@@ -421,6 +440,7 @@
     const saveUsernameBtn = document.getElementById("saveUsernameBtn");
     const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
     const usernameTxProgress = document.getElementById("usernameTxProgress");
+    const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
     let sending = false;
@@ -624,7 +644,7 @@
         items.push({ type: "entry", from: e.from, amount: e.amount, ts: e.ts, txId: e.txId });
       }
       for (const r of (gameData.pastRounds || [])) {
-        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round });
+        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round, entries: r.entries || [] });
       }
       items.sort((a, b) => b.ts - a.ts);
 
@@ -645,8 +665,72 @@
         fromEl.className = "entry-from";
         const name = displayName(item.from);
         const isSelf = myAddress && item.from === myAddress;
+        let buildRoundEntries = null;
         if (item.type === "payout") {
-          fromEl.textContent = "Round " + item.round + " won by " + name;
+          const hasEntries = item.entries.length > 0;
+          if (!hasEntries) el.classList.add("no-entries");
+          const chevron = document.createElement("span");
+          chevron.className = "chevron";
+          chevron.textContent = "\u25b6";
+          fromEl.appendChild(chevron);
+          fromEl.appendChild(document.createTextNode(
+            "Round " + item.round + " won by " + name + " (" + item.entries.length + " entr" + (item.entries.length === 1 ? "y" : "ies") + ")"
+          ));
+          if (hasEntries) {
+            buildRoundEntries = () => {
+              const container = document.createElement("div");
+              container.className = "round-entries";
+              const chrono = item.entries.slice().reverse();
+              const labels = {};
+              const seen = new Set();
+              let prev = null;
+              for (const e of chrono) {
+                if (prev === e.from) labels[e.txId] = "entered again";
+                else if (seen.has(e.from)) labels[e.txId] = "retook the lead";
+                else labels[e.txId] = "entered \u2014 timer reset";
+                seen.add(e.from);
+                prev = e.from;
+              }
+              for (const e of item.entries) {
+                const row = document.createElement("div");
+                row.className = "round-entry";
+                const rl = document.createElement("div");
+                const rf = document.createElement("div");
+                rf.className = "entry-from";
+                const eName = displayName(e.from);
+                const eSelf = myAddress && e.from === myAddress;
+                rf.textContent = eName + " " + (labels[e.txId] || "entered \u2014 timer reset");
+                if (eSelf) rf.style.color = "var(--accent)";
+                const rt = document.createElement("div");
+                rt.className = "entry-time";
+                rt.textContent = formatTime(e.ts);
+                rl.appendChild(rf);
+                rl.appendChild(rt);
+                const ra = document.createElement("div");
+                ra.className = "entry-amount";
+                ra.textContent = e.amount;
+                row.appendChild(rl);
+                row.appendChild(ra);
+                container.appendChild(row);
+              }
+              return container;
+            };
+            if (expandedRounds.has(item.round)) {
+              el.classList.add("expanded");
+            }
+            el.addEventListener("click", function () {
+              const isExpanded = el.classList.toggle("expanded");
+              if (isExpanded) expandedRounds.add(item.round);
+              else expandedRounds.delete(item.round);
+              let container = el.nextElementSibling;
+              if (container && container.classList.contains("round-entries")) {
+                container.style.display = isExpanded ? "" : "none";
+                return;
+              }
+              if (!isExpanded) return;
+              el.after(buildRoundEntries());
+            });
+          }
         } else {
           fromEl.textContent = name + " " + (entryLabels[item.txId] || "entered \u2014 timer reset");
           if (isSelf) fromEl.style.color = "var(--accent)";
@@ -664,6 +748,9 @@
         el.appendChild(left);
         el.appendChild(amtEl);
         entryList.appendChild(el);
+        if (buildRoundEntries && expandedRounds.has(item.round)) {
+          entryList.appendChild(buildRoundEntries());
+        }
       }
     }
 

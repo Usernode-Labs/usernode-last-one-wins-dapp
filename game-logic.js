@@ -159,6 +159,7 @@ function createLastOneWins(opts) {
         amount: tx.amount || 0,
         payoutTs: tx.ts,
         payoutTxId: tx.id,
+        entries: state.entries.slice(-50),
       });
       if (round >= state.roundNumber) {
         state.roundNumber = round + 1;
