@@ -48,9 +48,8 @@ function createLastOneWins(opts) {
 
   const MOCK_TIMER_DURATION_MS = 120000;
 
-  // TODO: Remove after 2026-05-14 — one-time 24h→8h migration guard.
-  const OLD_TIMER_DURATION_MS = 86400000;
-  const TIMER_CUTOVER_TS = Date.parse('2026-05-13T00:00:00Z');
+  // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
+  const TIMER_CHANGE_TS = Date.now();
 
   const state = {
     roundNumber: 1,
@@ -68,9 +67,7 @@ function createLastOneWins(opts) {
   let signerConfigured = false;
 
   function getTimerDuration() {
-    if (localDev) return MOCK_TIMER_DURATION_MS;
-    if (state.lastEntryTs && state.lastEntryTs < TIMER_CUTOVER_TS) return OLD_TIMER_DURATION_MS;
-    return timerDurationMs;
+    return localDev ? MOCK_TIMER_DURATION_MS : timerDurationMs;
   }
 
   function getTimeRemaining() {
@@ -258,6 +255,12 @@ function createLastOneWins(opts) {
     if (state.payoutInProgress) return;
     if (!state.lastSender || !state.lastEntryTs) return;
     if (getTimeRemaining() > 0) return;
+
+    // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
+    // Suppress payout for pre-deploy entries so the 24h→8h timer change
+    // doesn't expire an active round prematurely. Once a new entry arrives,
+    // lastEntryTs updates to post-deploy and this guard no longer fires.
+    if (state.lastEntryTs < TIMER_CHANGE_TS) return;
 
     state.payoutInProgress = true;
     const winner = state.lastSender;
