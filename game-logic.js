@@ -48,6 +48,10 @@ function createLastOneWins(opts) {
 
   const MOCK_TIMER_DURATION_MS = 120000;
 
+  // TODO: Remove after 2026-05-14 — one-time 24h→8h migration guard.
+  const OLD_TIMER_DURATION_MS = 86400000;
+  const TIMER_CUTOVER_TS = Date.parse('2026-05-13T00:00:00Z');
+
   const state = {
     roundNumber: 1,
     potBalance: 0,
@@ -64,7 +68,9 @@ function createLastOneWins(opts) {
   let signerConfigured = false;
 
   function getTimerDuration() {
-    return localDev ? MOCK_TIMER_DURATION_MS : timerDurationMs;
+    if (localDev) return MOCK_TIMER_DURATION_MS;
+    if (state.lastEntryTs && state.lastEntryTs < TIMER_CUTOVER_TS) return OLD_TIMER_DURATION_MS;
+    return timerDurationMs;
   }
 
   function getTimeRemaining() {
