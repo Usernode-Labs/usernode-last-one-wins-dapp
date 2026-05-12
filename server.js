@@ -24,7 +24,7 @@
  *   APP_PUBKEY        — game pot address (required for chain mode)
  *   APP_SECRET_KEY    — secret key for outgoing /wallet/send (required for chain mode)
  *   NODE_RPC_URL      — sidecar URL (default http://usernode-node:3000 inside compose)
- *   TIMER_DURATION_MS — countdown duration in ms (default 86400000 = 24h)
+ *   TIMER_DURATION_MS — countdown duration in ms (default 28800000 = 8h)
  */
 
 const path = require("path");
@@ -53,7 +53,7 @@ const PORT = parseInt(process.env.PORT, 10) || 3000;
 const APP_PUBKEY = process.env.APP_PUBKEY || "ut1_lastwin_default_pubkey";
 const APP_SECRET_KEY = process.env.APP_SECRET_KEY || "";
 const NODE_RPC_URL = process.env.NODE_RPC_URL || "http://usernode-node:3000";
-const TIMER_DURATION_MS = parseInt(process.env.TIMER_DURATION_MS, 10) || 86400000;
+const TIMER_DURATION_MS = parseInt(process.env.TIMER_DURATION_MS, 10) || 28800000;
 
 // ── Express app ──────────────────────────────────────────────────────────────
 const app = express();

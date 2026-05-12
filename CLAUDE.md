@@ -1,7 +1,7 @@
 # Last One Wins — notes for Claude Code
 
 A token game on the Usernode chain. Players send tokens to a shared pot
-address; if the configured timer (`TIMER_DURATION_MS`, default 24h) elapses
+address; if the configured timer (`TIMER_DURATION_MS`, default 8h) elapses
 without a new entry, the most recent sender wins the entire pot. The
 server-side process pays the winner via the sidecar `/wallet/send` RPC.
 

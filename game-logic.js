@@ -42,11 +42,14 @@ function createLastOneWins(opts) {
   const appPubkey = opts.appPubkey || "ut1_lastwin_default_pubkey";
   const appSecretKey = opts.appSecretKey || "";
   const nodeRpcUrl = opts.nodeRpcUrl || "http://localhost:3000";
-  const timerDurationMs = opts.timerDurationMs || 86400000;
+  const timerDurationMs = opts.timerDurationMs || 28800000;
   const localDev = !!opts.localDev;
   const mockTransactions = opts.mockTransactions || null;
 
   const MOCK_TIMER_DURATION_MS = 120000;
+
+  // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
+  const TIMER_CHANGE_TS = Date.now();
 
   const state = {
     roundNumber: 1,
@@ -252,6 +255,12 @@ function createLastOneWins(opts) {
     if (state.payoutInProgress) return;
     if (!state.lastSender || !state.lastEntryTs) return;
     if (getTimeRemaining() > 0) return;
+
+    // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
+    // Suppress payout for pre-deploy entries so the 24h→8h timer change
+    // doesn't expire an active round prematurely. Once a new entry arrives,
+    // lastEntryTs updates to post-deploy and this guard no longer fires.
+    if (state.lastEntryTs < TIMER_CHANGE_TS) return;
 
     state.payoutInProgress = true;
     const winner = state.lastSender;
