@@ -3192,6 +3192,19 @@
         return toUTF8Array(s);
       };
 
+      // Wire UTF-8 in as the default byte encoder. Without this,
+      // qrcode.stringToBytes stays bound to the 'default' encoder a
+      // few hundred lines up, which truncates each char to its low
+      // byte (`c & 0xff`). For ASCII payloads that round-trips fine
+      // (which is why the wallet-link QR worked), but any non-ASCII
+      // char silently corrupts: e.g. an em-dash U+2014 becomes byte
+      // 0x14 — the resulting bytes are not valid UTF-8, the mobile
+      // app's jsonDecode throws, and the user sees "invalid QR code".
+      // Every dapp confirmSubtitle in the fleet contains an em-dash,
+      // so this hit lastwin / falling-sands / echo / opinion-market
+      // 100% of the time.
+      qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+
     }();
 
     return {
