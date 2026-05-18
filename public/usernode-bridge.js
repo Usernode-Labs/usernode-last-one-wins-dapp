@@ -75,6 +75,43 @@
     }
   };
 
+  // ── Auto-configure from iframe URL token ──────────────────────────────
+  //
+  // When a dapp is embedded inside a host that appends `?token=<JWT>` to
+  // the iframe URL (e.g. Usernode Social Vibecoding's per-app iframes —
+  // see social-vibecoding/server.js `/api/iframe-token`), the JWT carries
+  // the signed-in user's linked `usernode_pubkey` as a claim. Decode it
+  // here and seed `_configuredAddress` so `getNodeAddress()` returns the
+  // linked address instead of the random `mockpk_*` fallback.
+  //
+  // No signature verification — the bridge doesn't have the host's
+  // signing key, and we only use the claim to populate a display-level
+  // identity (the "from" address for reads). Real wallet ops still go
+  // through the native channel, iframe relay, or QR fallback, all of
+  // which sign with material the bridge never sees. Treating an
+  // unverified pubkey as authoritative for reads is safe; treating it
+  // as authoritative for sends would not be — and we don't.
+  (function autoConfigureFromIframeToken() {
+    try {
+      if (typeof location === "undefined" || !location.search) return;
+      var params = new URLSearchParams(location.search);
+      var token = params.get("token");
+      if (!token) return;
+      var parts = token.split(".");
+      if (parts.length < 2) return;
+      var payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (payload.length % 4) payload += "=";
+      var decoded = JSON.parse(atob(payload));
+      var pk = decoded && decoded.usernode_pubkey;
+      if (typeof pk === "string" && pk.trim()) {
+        _configuredAddress = pk.trim();
+        console.log(
+          "[usernode-bridge] auto-configured address from iframe JWT (linked pubkey)"
+        );
+      }
+    } catch (_) { /* silently ignore parse errors — fall through to mock */ }
+  })();
+
   // Shared promise bridge for native calls (Flutter resolves via
   // `window.__usernodeResolve(id, value, error)`).
   window.__usernodeBridge = window.__usernodeBridge || { pending: {} };
