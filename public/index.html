@@ -4,7 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>Last One Wins</title>
-  <script src="/usernode-bridge.js"></script>
+  <!-- usernode-bridge is centralized in Usernode Social Vibecoding at
+       social-vibecoding/public/usernode-bridge/v1/bridge.js. All dapps in
+       the fleet load this same URL — one canonical copy, fleet-wide fix
+       on a single SV redeploy. SV serves it with
+       Cache-Control: no-cache, must-revalidate so each page load
+       revalidates via 304. Major-version bumps move to /v2/, segregating
+       cache state naturally. -->
+  <script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
   <script src="/usernode-usernames.js"></script>
   <script src="/usernode-loading.js"></script>
   <script>UsernodeLoading.init({ appName: "Last One Wins", streamKey: "lastwin" });</script>

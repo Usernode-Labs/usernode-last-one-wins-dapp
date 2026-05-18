@@ -36,7 +36,6 @@ last-one-wins/
     tx-match.js      Vendored helper for matching txs to bridge waiters.
   public/
     index.html         UI (single-file HTML/CSS/JS).
-    usernode-bridge.js
     usernode-usernames.js
     usernode-loading.js
   Dockerfile         node:22-alpine, port 3000, /health probe.

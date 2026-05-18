@@ -29,9 +29,13 @@ conventions win.
   when fixes land there.
 - `lib/tx-match.js` — Vendored helper used by `lib/dapp-server.js` for
   matching transactions against bridge waiters. Same re-vendor rule.
-- `public/` — Single-file HTML/JS UI plus the shared `usernode-bridge.js`,
-  `usernode-usernames.js`, and `usernode-loading.js`. The bridge and loader
-  are shared infrastructure; do not fork them per-app.
+- `public/` — Single-file HTML/JS UI plus the shared `usernode-usernames.js`
+  and `usernode-loading.js`. The bridge is loaded from
+  `https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js` —
+  canonical source lives in the social-vibecoding repo at
+  `public/usernode-bridge/v1/bridge.js`. Never vendor it per-app; bridge
+  fixes ship from one SV redeploy, fleet-wide. The loader is still
+  shared infrastructure; do not fork it per-app.
 
 ## Running locally
 
