@@ -42,11 +42,17 @@ function createLastOneWins(opts) {
   const appPubkey = opts.appPubkey || "ut1_lastwin_default_pubkey";
   const appSecretKey = opts.appSecretKey || "";
   const nodeRpcUrl = opts.nodeRpcUrl || "http://localhost:3000";
-  const timerDurationMs = opts.timerDurationMs || 28800000;
+  const timerDurationMs = opts.timerDurationMs || 14400000;
   const localDev = !!opts.localDev;
   const mockTransactions = opts.mockTransactions || null;
 
   const MOCK_TIMER_DURATION_MS = 120000;
+
+  // Speed-up action: spend SPEEDUP_COST tokens to set a fresh 30-minute
+  // fuse on the current round (see "Speed-Up" in CLAUDE.md).
+  const SPEEDUP_COST = 500;
+  const SPEEDUP_DURATION_MS = 1800000; // 30 min
+  const MOCK_SPEEDUP_DURATION_MS = 30000; // 30s — shorter than the 2-min mock base
 
   // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
   const TIMER_CHANGE_TS = Date.now();
@@ -56,6 +62,7 @@ function createLastOneWins(opts) {
     potBalance: 0,
     lastSender: null,
     lastEntryTs: null,
+    timerExpiresAt: null,
     entries: [],
     pastRounds: [],
     payoutInProgress: false,
@@ -70,9 +77,13 @@ function createLastOneWins(opts) {
     return localDev ? MOCK_TIMER_DURATION_MS : timerDurationMs;
   }
 
+  function getSpeedupDuration() {
+    return localDev ? MOCK_SPEEDUP_DURATION_MS : SPEEDUP_DURATION_MS;
+  }
+
   function getTimeRemaining() {
-    if (!state.lastEntryTs) return null;
-    return Math.max(0, getTimerDuration() - (Date.now() - state.lastEntryTs));
+    if (state.timerExpiresAt == null) return null;
+    return Math.max(0, state.timerExpiresAt - Date.now());
   }
 
   function resolveUsername(pubkey) {
@@ -92,7 +103,9 @@ function createLastOneWins(opts) {
       lastEntryTs: state.lastEntryTs,
       timerDurationMs: getTimerDuration(),
       timeRemainingMs: getTimeRemaining(),
-      timerExpired: state.lastEntryTs != null && getTimeRemaining() === 0,
+      timerExpired: state.timerExpiresAt != null && Date.now() >= state.timerExpiresAt,
+      speedupCost: SPEEDUP_COST,
+      speedupDurationMs: getSpeedupDuration(),
       entries: state.entries.slice(-50).reverse(),
       pastRounds: state.pastRounds.slice(-20).reverse(),
       payoutInProgress: state.payoutInProgress,
@@ -148,9 +161,25 @@ function createLastOneWins(opts) {
       if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
         state.lastSender = tx.from;
         state.lastEntryTs = tx.ts;
+        state.timerExpiresAt = tx.ts + getTimerDuration();
       }
-      state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id });
+      state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: "entry" });
       console.log(`[game] entry: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
+    } else if (memo.type === "speedup" && tx.to === appPubkey) {
+      const amount = tx.amount || 0;
+      if (amount <= 0) return;
+      state.potBalance += amount;
+      // A valid speed-up (>= SPEEDUP_COST) sets a fresh 30-min fuse; an
+      // underfunded speedup memo falls back to a base-duration entry so the
+      // tokens are never dropped. Out-of-order guard mirrors the entry path.
+      const isSpeedup = amount >= SPEEDUP_COST;
+      if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        state.lastSender = tx.from;
+        state.lastEntryTs = tx.ts;
+        state.timerExpiresAt = tx.ts + (isSpeedup ? getSpeedupDuration() : getTimerDuration());
+      }
+      state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isSpeedup ? "speedup" : "entry" });
+      console.log(`[game] ${isSpeedup ? "speedup" : "entry(speedup-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
     } else if (memo.type === "payout" && tx.from === appPubkey) {
       const round = memo.round || state.roundNumber;
       state.pastRounds.push({
@@ -166,6 +195,7 @@ function createLastOneWins(opts) {
         state.potBalance = 0;
         state.lastSender = null;
         state.lastEntryTs = null;
+        state.timerExpiresAt = null;
         state.entries = [];
       }
       console.log(`[game] payout detected: round ${round}, advancing to round ${state.roundNumber}`);
@@ -258,9 +288,10 @@ function createLastOneWins(opts) {
     if (getTimeRemaining() > 0) return;
 
     // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
-    // Suppress payout for pre-deploy entries so the 24h→8h timer change
-    // doesn't expire an active round prematurely. Once a new entry arrives,
-    // lastEntryTs updates to post-deploy and this guard no longer fires.
+    // Suppress payout for pre-deploy entries so the 8h→4h timer change
+    // doesn't expire an active round prematurely. Re-stamped on every boot,
+    // so it generically protects any base-duration cutover. Once a new entry
+    // arrives, lastEntryTs updates to post-deploy and this guard no longer fires.
     if (state.lastEntryTs < TIMER_CHANGE_TS) return;
 
     state.payoutInProgress = true;
@@ -350,6 +381,7 @@ function createLastOneWins(opts) {
     state.potBalance = 0;
     state.lastSender = null;
     state.lastEntryTs = null;
+    state.timerExpiresAt = null;
     state.entries = [];
     state.pastRounds = [];
     state.payoutInProgress = false;
