@@ -10,7 +10,8 @@
       "key": "APP_SECRET_KEY",
       "description": "Secret key paired with APP_PUBKEY. Used by the payout signer to send the pot to the winner when the timer expires. Never logged or returned via the API.",
       "required": true,
-      "sensitive": true
+      "sensitive": true,
+      "staging_default": ""
     },
     {
       "key": "NODE_RPC_URL",
