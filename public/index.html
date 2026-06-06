@@ -372,6 +372,7 @@
         <li>Send any amount of tokens to enter the game</li>
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
+        <li>&#9889; <strong>Speed Up:</strong> spend 500 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
@@ -405,6 +406,9 @@
       <input id="amountInput" type="number" min="1" max="1000" value="1" placeholder="Amt" />
       <button class="btn" id="sendBtn">Enter Now</button>
     </div>
+    <div class="send-row" style="margin-top:8px;">
+      <button class="btn" id="speedupBtn" style="background:var(--gold);border-color:var(--gold);color:#1a1205;">⚡ Speed Up (500)</button>
+    </div>
     <div class="error-msg" id="errorMsg"></div>
     <div class="tx-progress hide" id="txProgress">
       <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
@@ -432,6 +436,7 @@
     const mechanicLabelEl = document.getElementById("mechanicLabel");
     const amountInput = document.getElementById("amountInput");
     const sendBtn = document.getElementById("sendBtn");
+    const speedupBtn = document.getElementById("speedupBtn");
     const errorMsg = document.getElementById("errorMsg");
     const txProgressEl = document.getElementById("txProgress");
     const entryList = document.getElementById("entryList");
@@ -474,6 +479,12 @@
       const pad = (n) => String(n).padStart(2, "0");
       if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    function speedupLabel() {
+      const ms = (gameData && gameData.speedupDurationMs) || 1800000;
+      const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
+      return "⚡ sped up — " + txt;
     }
 
     function formatTime(ms) {
@@ -560,9 +571,22 @@
       sendBtn.disabled = !!v;
       amountInput.disabled = !!v;
       saveUsernameBtn.disabled = !!v;
+      updateSpeedupBtn();
       if (v) startProgressBar();
       else if (txSucceeded) completeProgressBar();
       else { stopProgressBar(); txProgressEl.classList.add("hide"); }
+    }
+
+    function updateSpeedupBtn() {
+      if (!speedupBtn) return;
+      const cost = (gameData && gameData.speedupCost) || 500;
+      speedupBtn.textContent = "⚡ Speed Up (" + cost + ")";
+      // Enabled only when not mid-send, the game has loaded, and a round is
+      // live (a leader exists and the round isn't already expired / paying out).
+      const roundLive = !!(gameData && gameData.lastSender) &&
+        !(gameData && gameData.timerExpired) &&
+        !(gameData && gameData.payoutInProgress);
+      speedupBtn.disabled = sending || !appPubkey || !roundLive;
     }
 
     /* ── Render ─────────────────────────────────────────────── */
@@ -588,6 +612,7 @@
 
       roundLabel.textContent = "Round " + gameData.roundNumber;
       potDisplay.textContent = String(gameData.potBalance);
+      updateSpeedupBtn();
 
       const isLeading = myAddress && gameData.lastSender === myAddress;
 
@@ -636,7 +661,9 @@
       const seenSenders = new Set();
       let prevEntrySender = null;
       for (const e of chronoEntries) {
-        if (prevEntrySender === e.from) {
+        if (e.kind === "speedup") {
+          entryLabels[e.txId] = speedupLabel();
+        } else if (prevEntrySender === e.from) {
           entryLabels[e.txId] = "entered again";
         } else if (seenSenders.has(e.from)) {
           entryLabels[e.txId] = "retook the lead";
@@ -697,7 +724,8 @@
               const seen = new Set();
               let prev = null;
               for (const e of chrono) {
-                if (prev === e.from) labels[e.txId] = "entered again";
+                if (e.kind === "speedup") labels[e.txId] = speedupLabel();
+                else if (prev === e.from) labels[e.txId] = "entered again";
                 else if (seen.has(e.from)) labels[e.txId] = "retook the lead";
                 else labels[e.txId] = "entered \u2014 timer reset";
                 seen.add(e.from);
@@ -853,6 +881,40 @@
       } catch (e) {
         setSending(false, false);
         showError("Send failed: " + (e.message || e));
+      }
+    });
+
+    /* ── Speed-Up handler ──────────────────────────────────────── */
+    speedupBtn.addEventListener("click", async () => {
+      if (sending) return;
+      showError("");
+
+      if (!appPubkey) {
+        showError("Game not loaded yet — please wait.");
+        return;
+      }
+
+      const cost = (gameData && gameData.speedupCost) || 500;
+      const memo = JSON.stringify({ app: "lastwin", type: "speedup" });
+      if (memo.length > 1024) {
+        showError("Payload too large.");
+        return;
+      }
+
+      try {
+        setSending(true);
+        const prevPot = gameData ? gameData.potBalance : 0;
+        await window.sendTransaction(appPubkey, cost, memo, { ...TX_SEND_OPTS, confirmTitle: "Speed up the clock", confirmSubtitle: "Last One Wins — spend " + cost + " to set a 30-minute fuse." });
+        setSending(false, true);
+        showError("");
+        for (let i = 0; i < 5; i++) {
+          await pollGameState();
+          if (gameData && gameData.potBalance !== prevPot) break;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (e) {
+        setSending(false, false);
+        showError("Speed-up failed: " + (e.message || e));
       }
     });
 
