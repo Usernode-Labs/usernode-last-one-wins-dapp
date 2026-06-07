@@ -372,7 +372,7 @@
         <li>Send any amount of tokens to enter the game</li>
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
-        <li>&#9889; <strong>Speed Up:</strong> spend 500 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
+        <li>&#9889; <strong>Speed Up:</strong> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
@@ -407,7 +407,7 @@
       <button class="btn" id="sendBtn">Enter Now</button>
     </div>
     <div class="send-row" style="margin-top:8px;">
-      <button class="btn" id="speedupBtn" style="background:var(--gold);border-color:var(--gold);color:#1a1205;">⚡ Speed Up (500)</button>
+      <button class="btn" id="speedupBtn" style="background:var(--gold);border-color:var(--gold);color:#1a1205;">⚡ Speed Up (100)</button>
     </div>
     <div class="error-msg" id="errorMsg"></div>
     <div class="tx-progress hide" id="txProgress">
@@ -579,7 +579,7 @@
 
     function updateSpeedupBtn() {
       if (!speedupBtn) return;
-      const cost = (gameData && gameData.speedupCost) || 500;
+      const cost = (gameData && gameData.speedupCost) || 100;
       speedupBtn.textContent = "⚡ Speed Up (" + cost + ")";
       // Enabled only when not mid-send, the game has loaded, and a round is
       // live (a leader exists and the round isn't already expired / paying out).
@@ -894,7 +894,7 @@
         return;
       }
 
-      const cost = (gameData && gameData.speedupCost) || 500;
+      const cost = (gameData && gameData.speedupCost) || 100;
       const memo = JSON.stringify({ app: "lastwin", type: "speedup" });
       if (memo.length > 1024) {
         showError("Payload too large.");

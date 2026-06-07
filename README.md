@@ -3,7 +3,7 @@
 A Usernode token game. Players send tokens to the pot address; if the
 configured timer (`TIMER_DURATION_MS`, default 4h) elapses without a
 new entry, the most recent sender wins the entire pot. Players can also
-spend 500 tokens on a "speed-up" to jump into the lead and reset the
+spend 100 tokens on a "speed-up" to jump into the lead and reset the
 countdown to a fresh 30 minutes. The server-side process pays the
 winner via the sidecar `/wallet/send` RPC.
 

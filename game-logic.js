@@ -50,7 +50,7 @@ function createLastOneWins(opts) {
 
   // Speed-up action: spend SPEEDUP_COST tokens to set a fresh 30-minute
   // fuse on the current round (see "Speed-Up" in CLAUDE.md).
-  const SPEEDUP_COST = 500;
+  const SPEEDUP_COST = 100;
   const SPEEDUP_DURATION_MS = 1800000; // 30 min
   const MOCK_SPEEDUP_DURATION_MS = 30000; // 30s — shorter than the 2-min mock base
 
