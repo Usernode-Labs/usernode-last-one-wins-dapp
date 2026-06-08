@@ -3,7 +3,7 @@
 A token game on the Usernode chain. Players send tokens to a shared pot
 address; if the configured timer (`TIMER_DURATION_MS`, default 4h) elapses
 without a new entry, the most recent sender wins the entire pot. Players
-can also spend 500 tokens on a "speed-up" to reset the countdown to a
+can also spend 100 tokens on a "speed-up" to reset the countdown to a
 fresh 30 minutes and jump into the lead. The
 server-side process pays the winner via the sidecar `/wallet/send` RPC.
 
@@ -79,7 +79,7 @@ Wallet operations are signed two different ways:
 Memos are JSON. Last One Wins only acts on these:
 
 - `user → game (entry)`:    `{"app":"lastwin","type":"entry"}`
-- `user → game (speed-up)`: `{"app":"lastwin","type":"speedup"}` (send ≥500
+- `user → game (speed-up)`: `{"app":"lastwin","type":"speedup"}` (send ≥100
   tokens — see "Speed-up action" below)
 - `user → game (username)`: `{"app":"lastwin","type":"set_username","username":"<name>"}`
 - `game → winner (payout)`: `{"app":"lastwin","type":"payout","round":<n>,"winner":"<addr>"}`
@@ -127,7 +127,7 @@ sidecar usernode build that exposes those endpoints.
 - Memo size is well under the 1024-byte chain limit; keep it that way.
 - `/__game/state` is intentionally public. It exposes a global summary
   that is the same for every viewer.
-- Speed-up action: a player can send `SPEEDUP_COST` (500) tokens with a
+- Speed-up action: a player can send `SPEEDUP_COST` (100) tokens with a
   `{"app":"lastwin","type":"speedup"}` memo to set a fresh 30-minute fuse
   (`SPEEDUP_DURATION_MS`) on the round and become the new last sender. The
   full amount still grows the pot. Unlike entries (which use the base
@@ -136,7 +136,7 @@ sidecar usernode build that exposes those endpoints.
   deadline is tracked explicitly as `state.timerExpiresAt`; entries set it
   to `ts + base`, speed-ups to `ts + 30min`, both guarded by the same
   `tx.ts >= lastEntryTs` out-of-order check. An underfunded speedup memo
-  (< 500) falls back to base-duration entry semantics so tokens are never
+  (< 100) falls back to base-duration entry semantics so tokens are never
   dropped. In `--local-dev`, the speed-up fuse is shortened to 30s
   (`MOCK_SPEEDUP_DURATION_MS`) so it stays shorter than the 2-min mock base.
   `/__game/state` exposes `speedupCost` and `speedupDurationMs` for the UI.
