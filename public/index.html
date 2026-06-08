@@ -130,6 +130,10 @@
     .personal-status.leading { color: var(--ok); }
     .personal-status.trailing { color: var(--accent); }
     .personal-status.won { color: var(--gold); }
+    .streak-banner {
+      margin-top: 10px; font-size: 13px; font-weight: 700;
+      color: var(--gold); min-height: 18px;
+    }
 
     hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 
@@ -373,6 +377,7 @@
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
         <li>&#9889; <strong>Speed Up:</strong> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
+        <li>&#128293; <strong>Win Streaks:</strong> <span id="streakInfoText">win consecutive rounds for a bonus on top of the pot &mdash; the longer the streak, the bigger the reward</span></li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
@@ -390,6 +395,7 @@
       <div class="pot-label">tokens in the pot</div>
       <div class="hero-copy">Every entry increases the prize</div>
       <div class="personal-status" id="personalStatus"></div>
+      <div class="streak-banner hide" id="streakBanner"></div>
     </div>
 
     <hr />
@@ -433,6 +439,8 @@
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
     const personalStatusEl = document.getElementById("personalStatus");
+    const streakBanner = document.getElementById("streakBanner");
+    const streakInfoText = document.getElementById("streakInfoText");
     const mechanicLabelEl = document.getElementById("mechanicLabel");
     const amountInput = document.getElementById("amountInput");
     const sendBtn = document.getElementById("sendBtn");
@@ -485,6 +493,31 @@
       const ms = (gameData && gameData.speedupDurationMs) || 1800000;
       const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
       return "⚡ sped up — " + txt;
+    }
+
+    // The streak the current leader would reach if they win this round. The
+    // server's currentStreak reflects the PREVIOUS round's winner, so a win by
+    // the same player extends it, anyone else starts at 1.
+    function predictWinnerStreak() {
+      if (!gameData || !gameData.lastSender) return 1;
+      const cs = gameData.currentStreak;
+      if (cs && cs.winner === gameData.lastSender) return cs.count + 1;
+      return 1;
+    }
+
+    // "You won!" / "X won!" message, augmented with a streak/bonus hint when
+    // the win reaches the bonus threshold. Used by both expired-state render
+    // paths so they stay in sync.
+    function wonMessage(winnerAddr, isSelf) {
+      const streak = predictWinnerStreak();
+      const min = (gameData && gameData.streakBonusMin) || 2;
+      if (isSelf) {
+        return streak >= min
+          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!"
+          : "You won! Payout incoming...";
+      }
+      const note = streak >= min ? " 🔥 " + streak + "-win streak!" : "";
+      return displayName(winnerAddr) + " won this round!" + note;
     }
 
     function formatTime(ms) {
@@ -630,13 +663,8 @@
         countdownLabel.textContent = gameData.payoutInProgress ? "Payout in progress..." : "Payout imminent!";
         mechanicLabelEl.textContent = "";
         sendBtn.textContent = "Enter Now";
-        if (isLeading) {
-          personalStatusEl.textContent = "You won! Payout incoming...";
-          personalStatusEl.className = "personal-status won";
-        } else {
-          personalStatusEl.textContent = displayName(gameData.lastSender) + " won this round!";
-          personalStatusEl.className = "personal-status won";
-        }
+        personalStatusEl.textContent = wonMessage(gameData.lastSender, isLeading);
+        personalStatusEl.className = "personal-status won";
       } else {
         countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
         countdownEl.className = "countdown";
@@ -651,6 +679,34 @@
           personalStatusEl.className = "personal-status trailing";
           sendBtn.textContent = "Enter Now";
         }
+      }
+
+      // Active win-streak banner. currentStreak holds the most recent round's
+      // winner and their consecutive-win count. Hidden during the expired/won
+      // state (the won message already carries the streak hint).
+      const cs = gameData.currentStreak;
+      if (cs && cs.count >= 2 && !gameData.timerExpired) {
+        const isMine = myAddress && cs.winner === myAddress;
+        const leadingStreak = gameData.lastSender === cs.winner;
+        if (isMine && leadingStreak) {
+          streakBanner.textContent = "🔥 You're on a " + cs.count + "-win streak — hold to extend it!";
+        } else if (isMine) {
+          streakBanner.textContent = "🔥 You're on a " + cs.count + "-win streak — win this round to extend it!";
+        } else {
+          streakBanner.textContent = "🔥 " + displayName(cs.winner) + " is on a " + cs.count + "-win streak";
+        }
+        streakBanner.classList.remove("hide");
+      } else {
+        streakBanner.textContent = "";
+        streakBanner.classList.add("hide");
+      }
+
+      // Keep the info-overlay copy in sync with server-configured thresholds.
+      if (streakInfoText && gameData.streakBonusMin != null && gameData.streakBonusPct != null) {
+        const pct = Math.round(gameData.streakBonusPct * 100);
+        streakInfoText.textContent = "win " + gameData.streakBonusMin +
+          "+ rounds in a row for a token bonus on top of the pot (" + pct +
+          "% per extra win) — the longer the streak, the bigger the reward";
       }
 
       entryList.innerHTML = "";
@@ -678,7 +734,7 @@
         items.push({ type: "entry", from: e.from, amount: e.amount, ts: e.ts, txId: e.txId });
       }
       for (const r of (gameData.pastRounds || [])) {
-        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round, entries: r.entries || [] });
+        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round, entries: r.entries || [], bonus: r.bonus || null });
       }
       items.sort((a, b) => b.ts - a.ts);
 
@@ -780,6 +836,14 @@
         timeEl.textContent = formatTime(item.ts);
         left.appendChild(fromEl);
         left.appendChild(timeEl);
+        if (item.type === "payout" && item.bonus && item.bonus.amount > 0) {
+          const bonusEl = document.createElement("div");
+          bonusEl.className = "entry-time";
+          bonusEl.style.color = "var(--gold)";
+          bonusEl.style.fontWeight = "600";
+          bonusEl.textContent = "🔥 " + item.bonus.streak + "-win streak bonus +" + item.bonus.amount;
+          left.appendChild(bonusEl);
+        }
 
         const amtEl = document.createElement("div");
         amtEl.className = "entry-amount";
@@ -806,13 +870,11 @@
           countdownEl.className = "countdown expired";
           countdownLabel.textContent = "Payout imminent!";
           mechanicLabelEl.textContent = "";
-          if (myAddress && gameData.lastSender === myAddress) {
-            personalStatusEl.textContent = "You won! Payout incoming...";
-            personalStatusEl.className = "personal-status won";
-          } else {
-            personalStatusEl.textContent = displayName(gameData.lastSender) + " won this round!";
-            personalStatusEl.className = "personal-status won";
-          }
+          const isSelfWin = myAddress && gameData.lastSender === myAddress;
+          personalStatusEl.textContent = wonMessage(gameData.lastSender, isSelfWin);
+          personalStatusEl.className = "personal-status won";
+          streakBanner.textContent = "";
+          streakBanner.classList.add("hide");
         }
       }
     }, 1000);
