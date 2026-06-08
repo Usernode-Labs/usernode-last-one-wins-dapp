@@ -24,6 +24,24 @@
       "description": "Countdown duration in milliseconds before the last sender is declared the winner. Defaults to 4h. Ignored in --local-dev (uses a fixed 2-minute timer).",
       "required": false,
       "default": "14400000"
+    },
+    {
+      "key": "ZONE_START_RADIUS",
+      "description": "Starting radius of the shrinking play zone, in normalized [0,1] board units (zone is centered at 0.5,0.5). Higher = more of the board safe at round start. Defaults to 0.70.",
+      "required": false,
+      "default": "0.70"
+    },
+    {
+      "key": "ZONE_MIN_RADIUS",
+      "description": "Floor radius the shrinking zone never drops below, in normalized [0,1] board units. Keeps the center playable so every round can resolve. Defaults to 0.12.",
+      "required": false,
+      "default": "0.12"
+    },
+    {
+      "key": "ZONE_SHRINK_MS",
+      "description": "Milliseconds of round elapsed time over which the zone contracts from start to min radius. Defaults to TIMER_DURATION_MS (4h). Scaled to the 2-minute window in --local-dev.",
+      "required": false,
+      "default": "14400000"
     }
   ]
 }

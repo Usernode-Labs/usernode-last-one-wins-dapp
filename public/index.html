@@ -330,6 +330,29 @@
     .bottomSheet-cancel:hover { color: var(--fg); border-color: var(--fg); }
     .bottomSheet-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* Zone board */
+    .zone-section { margin: 16px 0 4px; }
+    .zone-board-wrap {
+      position: relative; width: 100%; max-width: 320px; margin: 0 auto;
+      aspect-ratio: 1 / 1;
+    }
+    .zone-board {
+      width: 100%; height: 100%; display: block;
+      border-radius: 14px; border: 1px solid var(--border);
+      background: var(--card); touch-action: manipulation; cursor: crosshair;
+    }
+    .zone-hint { text-align: center; font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 16px; }
+    .zone-hint.inside { color: var(--ok); }
+    .zone-hint.outside { color: var(--danger); }
+    .zone-legend {
+      display: flex; justify-content: center; gap: 14px; flex-wrap: wrap;
+      font-size: 11px; color: var(--muted); margin-top: 6px;
+    }
+    .zone-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .zone-legend .dot.me { background: var(--accent); }
+    .zone-legend .dot.others { background: var(--muted); }
+    .zone-legend .dot.win { background: transparent; border: 2px solid var(--gold); width: 9px; height: 9px; }
+
     .hide { display: none !important; }
   </style>
 </head>
@@ -373,6 +396,7 @@
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
         <li>&#9889; <strong>Speed Up:</strong> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
+        <li>&#127919; <strong>Shrinking Zone:</strong> tap the board to pick where you land. A safe circle shrinks all round &mdash; only senders <em>inside</em> the zone can win. Drift outside and you forfeit the win (but never your tokens); send again from inside the circle to get back in.</li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
@@ -390,6 +414,21 @@
       <div class="pot-label">tokens in the pot</div>
       <div class="hero-copy">Every entry increases the prize</div>
       <div class="personal-status" id="personalStatus"></div>
+    </div>
+
+    <hr />
+
+    <div class="zone-section">
+      <div class="section-title">Play Zone</div>
+      <div class="zone-board-wrap">
+        <canvas class="zone-board" id="zoneBoard" width="320" height="320"></canvas>
+      </div>
+      <div class="zone-hint" id="zoneHint">Tap the board to choose where you&rsquo;ll land</div>
+      <div class="zone-legend">
+        <span><span class="dot me"></span>You</span>
+        <span><span class="dot others"></span>Others</span>
+        <span><span class="dot win"></span>Winning now</span>
+      </div>
     </div>
 
     <hr />
@@ -452,6 +491,9 @@
     const saveUsernameBtn = document.getElementById("saveUsernameBtn");
     const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
     const usernameTxProgress = document.getElementById("usernameTxProgress");
+    const zoneBoard = document.getElementById("zoneBoard");
+    const zoneHint = document.getElementById("zoneHint");
+    const zoneCtx = zoneBoard ? zoneBoard.getContext("2d") : null;
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -461,6 +503,7 @@
     let appPubkey = null;
     let myUsername = null;
     let usernameMap = {};
+    let pendingPosition = null; // {x,y} chosen by tapping the board for the next send
 
     /* ── Helpers ────────────────────────────────────────────── */
     function truncate(s, n) {
@@ -492,6 +535,144 @@
       const d = new Date(ms);
       const pad = (n) => String(n).padStart(2, "0");
       return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    /* ── Shrinking zone ─────────────────────────────────────── */
+    function round3(n) { return Math.round(n * 1000) / 1000; }
+
+    // Position the next send will use: an explicit tap, else our last on-chain
+    // position, else board center.
+    function myPosition() {
+      if (pendingPosition) return pendingPosition;
+      if (gameData && gameData.positions && myAddress && gameData.positions[myAddress]) {
+        return gameData.positions[myAddress];
+      }
+      return { x: 0.5, y: 0.5 };
+    }
+
+    // Mirror of the server's pure radius(t) so the circle animates smoothly
+    // between 4s polls instead of stepping.
+    function clientZone(now) {
+      if (!gameData || !gameData.zoneConfig) return null;
+      const zc = gameData.zoneConfig;
+      const cx = zc.centerX != null ? zc.centerX : 0.5;
+      const cy = zc.centerY != null ? zc.centerY : 0.5;
+      if (gameData.roundStartTs == null) return { centerX: cx, centerY: cy, radius: zc.startRadius };
+      const elapsed = now - gameData.roundStartTs;
+      const progress = zc.shrinkMs > 0 ? Math.min(1, Math.max(0, elapsed / zc.shrinkMs)) : 1;
+      const radius = Math.max(zc.minRadius, zc.startRadius - (zc.startRadius - zc.minRadius) * progress);
+      return { centerX: cx, centerY: cy, radius };
+    }
+
+    function insideZone(pos, zone) {
+      if (!pos || !zone) return false;
+      const dx = pos.x - zone.centerX, dy = pos.y - zone.centerY;
+      return Math.sqrt(dx * dx + dy * dy) <= zone.radius;
+    }
+
+    function cssVar(name, fallback) {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+      return (v && v.trim()) || fallback;
+    }
+
+    function drawZoneBoard() {
+      if (!zoneCtx || !zoneBoard) return;
+      const rect = zoneBoard.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const size = Math.max(1, Math.round(rect.width || zoneBoard.clientWidth || 320));
+      if (zoneBoard.width !== Math.round(size * dpr)) {
+        zoneBoard.width = Math.round(size * dpr);
+        zoneBoard.height = Math.round(size * dpr);
+      }
+      const ctx = zoneCtx;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+
+      const accent = cssVar("--accent", "#6ea8fe");
+      const ok = cssVar("--ok", "#5dd39e");
+      const gold = cssVar("--gold", "#facc15");
+      const muted = cssVar("--muted", "#a8b3c7");
+
+      // Danger backdrop (everything outside the safe circle).
+      ctx.fillStyle = "rgba(255,107,107,0.08)";
+      ctx.fillRect(0, 0, size, size);
+
+      const zone = clientZone(Date.now());
+      if (zone) {
+        const cx = zone.centerX * size, cy = zone.centerY * size, r = zone.radius * size;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(94,211,158,0.10)";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = ok;
+        ctx.stroke();
+      }
+
+      const positions = (gameData && gameData.positions) || {};
+      const eligible = gameData && gameData.eligibleWinner;
+      for (const addr in positions) {
+        const p = positions[addr];
+        const px = p.x * size, py = p.y * size;
+        const isSelf = myAddress && addr === myAddress;
+        const isWinner = eligible && addr === eligible;
+        ctx.beginPath();
+        ctx.arc(px, py, isSelf ? 6 : 4, 0, Math.PI * 2);
+        ctx.fillStyle = isSelf ? accent : muted;
+        ctx.fill();
+        if (isWinner) {
+          ctx.beginPath();
+          ctx.arc(px, py, 9, 0, Math.PI * 2);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = gold;
+          ctx.stroke();
+        }
+      }
+
+      // Ghost marker: where the next send will land.
+      const mine = myPosition();
+      if (mine) {
+        const px = mine.x * size, py = mine.y * size;
+        ctx.beginPath();
+        ctx.arc(px, py, 7, 0, Math.PI * 2);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = accent;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      updateZoneHint(zone);
+    }
+
+    function updateZoneHint(zone) {
+      if (!zoneHint) return;
+      if (!gameData || !gameData.lastSender) {
+        zoneHint.className = "zone-hint";
+        zoneHint.textContent = "Tap the board to choose where you’ll land";
+        return;
+      }
+      const inside = insideZone(myPosition(), zone);
+      if (inside) {
+        zoneHint.className = "zone-hint inside";
+        zoneHint.textContent = pendingPosition
+          ? "Inside the zone — send to lock in this spot"
+          : "You’re inside the zone";
+      } else {
+        zoneHint.className = "zone-hint outside";
+        zoneHint.textContent = "Outside the zone — move in and send to stay eligible";
+      }
+    }
+
+    if (zoneBoard) {
+      zoneBoard.addEventListener("click", (e) => {
+        const rect = zoneBoard.getBoundingClientRect();
+        if (!rect.width) return;
+        const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+        pendingPosition = { x, y };
+        drawZoneBoard();
+      });
     }
 
     function showError(msg) {
@@ -641,17 +822,30 @@
         countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
         countdownEl.className = "countdown";
         countdownLabel.textContent = "until pot is claimed";
-        mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
-        if (isLeading) {
-          personalStatusEl.textContent = "You\u2019re the last entry \u2014 hold until time runs out to win!";
+        mechanicLabelEl.textContent = "Zone is shrinking \u2014 stay inside to stay eligible";
+        const zone = clientZone(Date.now());
+        const meInside = insideZone(myPosition(), zone);
+        const iAmEligible = myAddress && gameData.eligibleWinner === myAddress;
+        if (isLeading && !meInside) {
+          // Holding the timer lead but stranded outside the zone \u2014 ineligible.
+          personalStatusEl.textContent = "You\u2019re in the lead but OUTSIDE the zone \u2014 move in or you can\u2019t win!";
+          personalStatusEl.className = "personal-status trailing";
+          sendBtn.textContent = "Move Into Zone";
+        } else if (iAmEligible) {
+          personalStatusEl.textContent = "You\u2019re inside the zone and winning \u2014 hold until time runs out!";
           personalStatusEl.className = "personal-status leading";
           sendBtn.textContent = "Enter Again";
         } else {
-          personalStatusEl.textContent = displayName(gameData.lastSender) + " is in the lead \u2014 enter now!";
+          const leadName = displayName(gameData.eligibleWinner || gameData.lastSender);
+          personalStatusEl.textContent = meInside
+            ? leadName + " is winning \u2014 enter again to retake the lead!"
+            : leadName + " is winning \u2014 tap the zone and enter to get in!";
           personalStatusEl.className = "personal-status trailing";
           sendBtn.textContent = "Enter Now";
         }
       }
+
+      drawZoneBoard();
 
       entryList.innerHTML = "";
       const items = [];
@@ -861,7 +1055,8 @@
         return;
       }
 
-      const memo = JSON.stringify({ app: "lastwin", type: "entry" });
+      const pos = myPosition();
+      const memo = JSON.stringify({ app: "lastwin", type: "entry", x: round3(pos.x), y: round3(pos.y) });
       if (memo.length > 1024) {
         showError("Payload too large.");
         return;
@@ -872,6 +1067,7 @@
         const prevPot = gameData ? gameData.potBalance : 0;
         await window.sendTransaction(appPubkey, amount, memo, { ...TX_SEND_OPTS, confirmTitle: "Lock in your move", confirmSubtitle: "Last One Wins — Send tokens to enter the game." });
         setSending(false, true);
+        pendingPosition = null; // committed — fall back to on-chain position next time
         showError("");
         for (let i = 0; i < 5; i++) {
           await pollGameState();
@@ -895,7 +1091,8 @@
       }
 
       const cost = (gameData && gameData.speedupCost) || 100;
-      const memo = JSON.stringify({ app: "lastwin", type: "speedup" });
+      const pos = myPosition();
+      const memo = JSON.stringify({ app: "lastwin", type: "speedup", x: round3(pos.x), y: round3(pos.y) });
       if (memo.length > 1024) {
         showError("Payload too large.");
         return;
@@ -906,6 +1103,7 @@
         const prevPot = gameData ? gameData.potBalance : 0;
         await window.sendTransaction(appPubkey, cost, memo, { ...TX_SEND_OPTS, confirmTitle: "Speed up the clock", confirmSubtitle: "Last One Wins — spend " + cost + " to set a 30-minute fuse." });
         setSending(false, true);
+        pendingPosition = null; // committed — fall back to on-chain position next time
         showError("");
         for (let i = 0; i < 5; i++) {
           await pollGameState();
@@ -1027,6 +1225,12 @@
 
       await pollGameState();
       setInterval(pollGameState, GAME_POLL_MS);
+
+      // Animate the shrinking circle between 4s polls (radius is a pure
+      // function of elapsed time, so the client recomputes it locally).
+      drawZoneBoard();
+      setInterval(drawZoneBoard, 500);
+      window.addEventListener("resize", drawZoneBoard);
 
       const infoToggle = document.getElementById("infoToggle");
       const infoOverlay = document.getElementById("infoOverlay");

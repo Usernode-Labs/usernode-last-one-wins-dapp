@@ -78,9 +78,10 @@ Wallet operations are signed two different ways:
 
 Memos are JSON. Last One Wins only acts on these:
 
-- `user → game (entry)`:    `{"app":"lastwin","type":"entry"}`
-- `user → game (speed-up)`: `{"app":"lastwin","type":"speedup"}` (send ≥100
-  tokens — see "Speed-up action" below)
+- `user → game (entry)`:    `{"app":"lastwin","type":"entry","x":<0..1>,"y":<0..1>}`
+  (`x`/`y` are optional normalized board coords — see "Shrinking zone" below)
+- `user → game (speed-up)`: `{"app":"lastwin","type":"speedup","x":<0..1>,"y":<0..1>}`
+  (send ≥100 tokens — see "Speed-up action" below; same optional `x`/`y`)
 - `user → game (username)`: `{"app":"lastwin","type":"set_username","username":"<name>"}`
 - `game → winner (payout)`: `{"app":"lastwin","type":"payout","round":<n>,"winner":"<addr>"}`
 - `game → game (consolidate)`: `{"app":"lastwin","type":"consolidate"}` (UTXO
@@ -140,6 +141,29 @@ sidecar usernode build that exposes those endpoints.
   dropped. In `--local-dev`, the speed-up fuse is shortened to 30s
   (`MOCK_SPEEDUP_DURATION_MS`) so it stays shorter than the 2-min mock base.
   `/__game/state` exposes `speedupCost` and `speedupDurationMs` for the UI.
+- Shrinking zone: every entry/speed-up carries an optional normalized
+  `x`/`y` (board space `[0,1]²`, origin top-left). A safe circle centered
+  at `(0.5, 0.5)` contracts from `ZONE_START_RADIUS` (0.70) to
+  `ZONE_MIN_RADIUS` (0.12) over `ZONE_SHRINK_MS` (defaults to the base
+  timer) of round elapsed time. The radius is a **pure function** of
+  `now - state.roundStartTs` (`getZoneRadius` in `game-logic.js`) — never
+  stored mutably — so it's reconstructable from chain data and identical
+  across parallel deploys. `state.positions` (Map, latest-wins per sender,
+  cleared on payout/reset) tracks each sender's current spot;
+  `state.roundStartTs` is the earliest entry ts of the round (min over
+  arrivals, robust to out-of-order backfill). Coordinate-less or invalid
+  memos fall back to a deterministic per-pubkey position (`defaultPosition`,
+  sha256 of the pubkey). **Win selection:** `checkPayout` pays the
+  most-recent sender currently *inside* the zone (`computeEligibleWinner`),
+  falling back to `state.lastSender` when the zone has emptied so the pot is
+  never stranded. Being outside only forfeits win-eligibility — tokens are
+  never lost and the entry still grows the pot. The floor radius (> 0)
+  guarantees the center stays playable so every round resolves.
+  `/__game/state` exposes `zone`, `zoneConfig`, `roundStartTs`, `positions`
+  (capped to ~50), and `eligibleWinner` for the UI. In `--local-dev` the
+  shrink window is scaled to `MOCK_ZONE_SHRINK_MS` (2 min) to match the mock
+  base timer. Tunable via `ZONE_START_RADIUS`, `ZONE_MIN_RADIUS`,
+  `ZONE_SHRINK_MS` env vars (see `dapp.json`).
 
 ## Parallel deploys + same APP_PUBKEY
 
