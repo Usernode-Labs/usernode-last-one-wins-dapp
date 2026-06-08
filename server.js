@@ -55,6 +55,20 @@ const APP_SECRET_KEY = process.env.APP_SECRET_KEY || "";
 const NODE_RPC_URL = process.env.NODE_RPC_URL || "http://usernode-node:3000";
 const TIMER_DURATION_MS = parseInt(process.env.TIMER_DURATION_MS, 10) || 14400000;
 
+// ── Dynamic shrinking zone config (see "Dynamic Shrinking Zone" spec) ─────────
+// Radius shrinks from ZONE_START_RADIUS to ZONE_MIN_RADIUS over ZONE_SHRINK_MS
+// of round elapsed time, in normalized [0,1] board space. ZONE_SHRINK_MS
+// defaults to the base timer so the zone floors around the same horizon a lone
+// entry would expire from. In --local-dev the shrink window is scaled down to
+// the 2-minute mock timer inside game-logic.js.
+function parseFloatEnv(name, fallback) {
+  const v = parseFloat(process.env[name]);
+  return Number.isFinite(v) ? v : fallback;
+}
+const ZONE_START_RADIUS = parseFloatEnv("ZONE_START_RADIUS", 0.70);
+const ZONE_MIN_RADIUS = parseFloatEnv("ZONE_MIN_RADIUS", 0.12);
+const ZONE_SHRINK_MS = parseInt(process.env.ZONE_SHRINK_MS, 10) || TIMER_DURATION_MS;
+
 // ── Express app ──────────────────────────────────────────────────────────────
 const app = express();
 
@@ -80,6 +94,9 @@ const game = createLastOneWins({
   appSecretKey: APP_SECRET_KEY,
   nodeRpcUrl: NODE_RPC_URL,
   timerDurationMs: TIMER_DURATION_MS,
+  zoneStartRadius: ZONE_START_RADIUS,
+  zoneMinRadius: ZONE_MIN_RADIUS,
+  zoneShrinkMs: ZONE_SHRINK_MS,
   localDev: LOCAL_DEV,
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
 });
@@ -281,6 +298,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  App pubkey:    ${APP_PUBKEY.slice(0, 24)}…`);
   console.log(`  Node RPC:      ${NODE_RPC_URL}`);
   console.log(`  Timer:         ${timerMinutes} minutes`);
+  console.log(`  Zone:          radius ${ZONE_START_RADIUS}→${ZONE_MIN_RADIUS} over ${Math.round((LOCAL_DEV ? 120000 : ZONE_SHRINK_MS) / 60000)} min`);
   console.log(`  Mode:          ${LOCAL_DEV ? "LOCAL DEV (mock API)" : "production (chain pollers running, public access)"}`);
   console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}\n`);
 });

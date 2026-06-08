@@ -7,6 +7,16 @@ spend 100 tokens on a "speed-up" to jump into the lead and reset the
 countdown to a fresh 30 minutes. The server-side process pays the
 winner via the sidecar `/wallet/send` RPC.
 
+A **dynamic shrinking zone** layers on top of this: every entry/speed-up
+picks a position on a normalized board, and a safe circle (centered at
+the board's middle) contracts over the round. Only senders currently
+*inside* the zone are win-eligible — when the timer expires the pot goes
+to the most-recent in-zone sender (falling back to the last sender if the
+zone has somehow emptied). Drifting outside forfeits the win, never the
+tokens; sending again from inside restores eligibility. The radius is a
+pure function of round elapsed time, so it's fully reconstructable from
+chain data and identical across parallel deploys.
+
 Designed to run as a child app inside Usernode Social Vibecoding, but also
 works standalone (mobile WebView or desktop QR) when fronted by a node.
 
@@ -85,8 +95,12 @@ lost).
 ## Memo schema
 
 ```js
-// user → game (entry)
-{ app: "lastwin", type: "entry" }
+// user → game (entry) — x/y are optional normalized [0,1] board coords;
+// omitted/invalid coords fall back to a deterministic per-pubkey position
+{ app: "lastwin", type: "entry", x: 0.42, y: 0.61 }
+
+// user → game (speed-up) — same optional x/y coords
+{ app: "lastwin", type: "speedup", x: 0.5, y: 0.5 }
 
 // user → game (display name)
 { app: "lastwin", type: "set_username", username: "alice" }
@@ -103,6 +117,9 @@ lost).
 | `APP_SECRET_KEY` | Used to sign outgoing `/wallet/send` calls (payouts and consolidations). |
 | `NODE_RPC_URL` | Sidecar URL. Default `http://usernode-node:3000` (compose internal). |
 | `TIMER_DURATION_MS` | Countdown duration in ms. Default 14400000 (4h). Ignored in `--local-dev` (uses 2 min). |
+| `ZONE_START_RADIUS` | Shrinking zone's starting radius in normalized [0,1] board units. Default 0.70. |
+| `ZONE_MIN_RADIUS` | Floor radius the zone never drops below (keeps center playable). Default 0.12. |
+| `ZONE_SHRINK_MS` | Elapsed-time window over which the zone contracts start→min. Default = `TIMER_DURATION_MS`. Scaled to 2 min in `--local-dev`. |
 | `PORT` | HTTP port (default 3000). |
 
 ## Origin
