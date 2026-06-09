@@ -340,6 +340,7 @@
       <div class="round" id="roundLabel">Round 1</div>
       <div style="display:flex;align-items:center;gap:6px;">
         <button class="header-pill" id="usernamePill" type="button" title="Change username"><span id="usernameDisplay">...</span></button>
+        <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
@@ -377,6 +378,14 @@
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
       <p class="muted">All game state lives on the Usernode blockchain. The server tracks the timer and sends automated payouts. Tap anywhere outside this panel to close.</p>
+    </div>
+  </div>
+
+  <!-- Pot breakdown overlay -->
+  <div class="info-overlay" id="potOverlay">
+    <div class="info-content" id="potContent">
+      <h2>Pot Breakdown</h2>
+      <div id="potBreakdownBody"></div>
     </div>
   </div>
 
@@ -452,6 +461,10 @@
     const saveUsernameBtn = document.getElementById("saveUsernameBtn");
     const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
     const usernameTxProgress = document.getElementById("usernameTxProgress");
+    const potToggle = document.getElementById("potToggle");
+    const potOverlay = document.getElementById("potOverlay");
+    const potContent = document.getElementById("potContent");
+    const potBreakdownBody = document.getElementById("potBreakdownBody");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -794,6 +807,121 @@
       }
     }
 
+    /* ── Pot breakdown overlay render ───────────────────────── */
+    function pbContribRow(label, count, amount, gold) {
+      const row = document.createElement("div");
+      row.className = "entry-item";
+      const left = document.createElement("div");
+      const f = document.createElement("div");
+      f.className = "entry-from";
+      f.textContent = label + (count != null ? " · " + count + "×" : "");
+      left.appendChild(f);
+      const a = document.createElement("div");
+      a.className = "entry-amount";
+      if (gold) a.style.color = "var(--gold)";
+      a.textContent = String(amount);
+      row.appendChild(left);
+      row.appendChild(a);
+      return row;
+    }
+
+    function renderPotBreakdown() {
+      if (!potBreakdownBody) return;
+      potBreakdownBody.innerHTML = "";
+
+      const pot = gameData ? (gameData.potBalance || 0) : 0;
+      const entries = (gameData && gameData.entries) || [];
+      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0;
+      for (const e of entries) {
+        const amt = Number(e.amount) || 0;
+        if (e.kind === "speedup") { speedupsSum += amt; speedupsCount++; }
+        else { entriesSum += amt; entriesCount++; }
+      }
+      const recentSum = entriesSum + speedupsSum;
+      const earlier = Math.max(0, pot - recentSum);
+      const cost = (gameData && gameData.speedupCost) || 100;
+      const leader = gameData && gameData.lastSender;
+      const potEmpty = !leader || pot <= 0;
+
+      // Pot total
+      const potWrap = document.createElement("div");
+      potWrap.style.textAlign = "center";
+      potWrap.style.marginBottom = "14px";
+      const potVal = document.createElement("div");
+      potVal.className = "pot";
+      potVal.style.margin = "0";
+      potVal.textContent = String(pot);
+      const potLbl = document.createElement("div");
+      potLbl.className = "pot-label";
+      potLbl.textContent = "tokens in the pot";
+      potWrap.appendChild(potVal);
+      potWrap.appendChild(potLbl);
+      potBreakdownBody.appendChild(potWrap);
+
+      // Distribution summary (static — winner takes all)
+      const dist = document.createElement("div");
+      dist.innerHTML =
+        '<p style="margin:0 0 6px;font-weight:600;">Winner takes all</p>' +
+        '<ul style="margin:0 0 12px;padding-left:18px;">' +
+        '<li><strong>100%</strong> of the pot goes to the winner</li>' +
+        '<li><strong>0</strong> fees</li>' +
+        '<li>Nothing is kept by the house</li>' +
+        '<li>No rollover — the pot resets to 0 each round</li>' +
+        '</ul>';
+      potBreakdownBody.appendChild(dist);
+
+      if (potEmpty) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "The pot is empty — be the first to enter!";
+        potBreakdownBody.appendChild(empty);
+      } else {
+        // Contribution breakdown (recent activity; reconciles to pot total)
+        const title = document.createElement("div");
+        title.className = "section-title";
+        title.textContent = "Recent contributions";
+        potBreakdownBody.appendChild(title);
+
+        const list = document.createElement("div");
+        list.className = "entry-list";
+        list.appendChild(pbContribRow("Entries", entriesCount, entriesSum, false));
+        list.appendChild(pbContribRow("⚡ Speed-ups", speedupsCount, speedupsSum, true));
+        if (earlier > 0) list.appendChild(pbContribRow("Earlier contributions", null, earlier, false));
+        potBreakdownBody.appendChild(list);
+
+        if (earlier > 0) {
+          const recNote = document.createElement("p");
+          recNote.className = "muted";
+          recNote.style.marginTop = "8px";
+          recNote.textContent = "Split reflects recent activity; the pot total above is authoritative.";
+          potBreakdownBody.appendChild(recNote);
+        }
+
+        // Current leader / would-be winner
+        const leaderLine = document.createElement("div");
+        leaderLine.className = "personal-status";
+        leaderLine.style.marginTop = "14px";
+        const isSelf = myAddress && leader === myAddress;
+        if (gameData.timerExpired || gameData.payoutInProgress) {
+          leaderLine.classList.add("won");
+          leaderLine.textContent = (isSelf ? "You" : displayName(leader)) + " won this round — full pot paid out";
+        } else {
+          leaderLine.classList.add(isSelf ? "leading" : "trailing");
+          leaderLine.textContent = isSelf
+            ? "If the timer runs out now, you win " + pot + " tokens"
+            : "If the timer runs out now, " + displayName(leader) + " wins " + pot + " tokens";
+        }
+        potBreakdownBody.appendChild(leaderLine);
+      }
+
+      // Speed-up note (always)
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.style.marginTop = "12px";
+      note.textContent = "⚡ A speed-up sends " + cost + "+ tokens — the full amount joins the pot. It buys a faster clock, not a discount or a fee.";
+      potBreakdownBody.appendChild(note);
+    }
+
     /* ── Countdown tick (1s local updates between polls) ───── */
     setInterval(() => {
       if (!gameData || !gameData.lastSender || gameData.timerExpired) return;
@@ -833,6 +961,7 @@
           window.usernode.serverCacheUrl = "/__usernode/cache/" + appPubkey;
         }
         render();
+        if (potOverlay && potOverlay.classList.contains("open")) renderPotBreakdown();
         statusDot.className = "status-dot ok";
         statusText.textContent = "connected";
       } catch (e) {
@@ -1031,11 +1160,26 @@
       const infoToggle = document.getElementById("infoToggle");
       const infoOverlay = document.getElementById("infoOverlay");
       const infoContent = document.getElementById("infoContent");
+
+      // Overlays are mutually exclusive — opening one closes the others.
+      function closeOverlays() {
+        if (infoOverlay) infoOverlay.classList.remove("open");
+        if (potOverlay) potOverlay.classList.remove("open");
+      }
+
       if (infoToggle && infoOverlay) {
-        infoToggle.addEventListener("click", () => infoOverlay.classList.add("open"));
+        infoToggle.addEventListener("click", () => { closeOverlays(); infoOverlay.classList.add("open"); });
         infoOverlay.addEventListener("click", (e) => {
           if (!infoContent.contains(e.target)) {
             infoOverlay.classList.remove("open");
+          }
+        });
+      }
+      if (potToggle && potOverlay) {
+        potToggle.addEventListener("click", () => { closeOverlays(); renderPotBreakdown(); potOverlay.classList.add("open"); });
+        potOverlay.addEventListener("click", (e) => {
+          if (!potContent.contains(e.target)) {
+            potOverlay.classList.remove("open");
           }
         });
       }
