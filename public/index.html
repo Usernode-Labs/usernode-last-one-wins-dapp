@@ -193,6 +193,12 @@
     .entry-item .entry-from { color: var(--muted); font-size: 12px; }
     .entry-item .entry-amount { font-weight: 600; white-space: nowrap; }
     .entry-item .entry-time { font-size: 11px; color: var(--muted); }
+    .entry-addr {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px; color: var(--muted); opacity: 0.85; letter-spacing: 0.2px;
+    }
+    .entry-addr.self { color: var(--accent); opacity: 1; }
+    .round-entries .entry-addr { font-size: 10px; }
     .entry-item.payout {
       background: var(--gold-dim); border-color: var(--gold);
       cursor: pointer; user-select: none;
@@ -467,6 +473,17 @@
       if (!s || s.length <= n) return s || "";
       const h = Math.floor((n - 3) / 2);
       return s.slice(0, h) + "..." + s.slice(-h);
+    }
+
+    // Secondary monospaced line showing the player's on-chain address.
+    // Returns null when `addr` is falsy so callers can skip appending it.
+    function addrLine(addr, isSelf) {
+      if (!addr) return null;
+      const el = document.createElement("div");
+      el.className = "entry-addr" + (isSelf ? " self" : "");
+      el.textContent = truncate(addr, 16);
+      el.title = addr;
+      return el;
     }
 
     function formatCountdown(ms) {
@@ -745,6 +762,8 @@
                 rt.className = "entry-time";
                 rt.textContent = formatTime(e.ts);
                 rl.appendChild(rf);
+                const reAddr = addrLine(e.from, eSelf);
+                if (reAddr) rl.appendChild(reAddr);
                 rl.appendChild(rt);
                 const ra = document.createElement("div");
                 ra.className = "entry-amount";
@@ -779,6 +798,8 @@
         timeEl.className = "entry-time";
         timeEl.textContent = formatTime(item.ts);
         left.appendChild(fromEl);
+        const addrEl = addrLine(item.from, isSelf);
+        if (addrEl) left.appendChild(addrEl);
         left.appendChild(timeEl);
 
         const amtEl = document.createElement("div");
