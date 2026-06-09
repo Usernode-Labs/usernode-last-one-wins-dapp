@@ -111,12 +111,41 @@
     /* Hero countdown */
     .hero { text-align: center; padding: 20px 0 16px; }
     .countdown {
-      font-size: 48px; font-weight: 800; letter-spacing: -1px;
+      font-size: 64px; font-weight: 900; letter-spacing: -2px;
       font-variant-numeric: tabular-nums; color: var(--fg);
-      line-height: 1.1;
+      line-height: 1.05;
+      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+      transition: color 0.3s ease, text-shadow 0.3s ease, transform 0.3s ease;
     }
-    .countdown.expired { color: var(--gold); }
-    .countdown.waiting { color: var(--muted); font-size: 24px; font-weight: 500; }
+    .countdown.expired {
+      color: var(--gold);
+      text-shadow: 0 0 24px rgba(212, 175, 55, 0.5);
+    }
+    .countdown.waiting {
+      color: var(--muted); font-size: 24px; font-weight: 500;
+      letter-spacing: 0; text-shadow: none;
+    }
+    /* Red-alert urgency: < 5 minutes remaining */
+    .countdown.urgent {
+      color: #ff2d2d;
+      text-shadow: 0 0 12px rgba(255, 45, 45, 0.55), 0 0 28px rgba(255, 45, 45, 0.35);
+      animation: countdownPulse 1s ease-in-out infinite;
+    }
+    @keyframes countdownPulse {
+      0%, 100% {
+        transform: scale(1);
+        color: #ff4d4d;
+        text-shadow: 0 0 10px rgba(255, 45, 45, 0.45), 0 0 22px rgba(255, 45, 45, 0.25);
+      }
+      50% {
+        transform: scale(1.06);
+        color: #ff0000;
+        text-shadow: 0 0 18px rgba(255, 0, 0, 0.85), 0 0 40px rgba(255, 0, 0, 0.5);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .countdown.urgent { animation: none; transform: none; }
+    }
     .hero-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
     .pot {
       font-size: 40px; font-weight: 800; margin: 12px 0 2px;
@@ -424,6 +453,7 @@
   (function () {
     /* ── Config ─────────────────────────────────────────────── */
     const GAME_POLL_MS = 4000;
+    const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // < 5 min remaining → red-alert flash
     const TX_SEND_OPTS = { timeoutMs: 180000, pollIntervalMs: 1500 };
     const EXPLORER_BASE = window.location.origin + "/explorer-api";
 
@@ -479,6 +509,14 @@
       const pad = (n) => String(n).padStart(2, "0");
       if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    // Render the live countdown text and toggle the red-alert urgency
+    // state purely from the remaining time (client-side only).
+    function renderCountdown(ms) {
+      countdownEl.textContent = formatCountdown(ms);
+      const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
+      countdownEl.className = urgent ? "countdown urgent" : "countdown";
     }
 
     function speedupLabel() {
@@ -638,8 +676,7 @@
           personalStatusEl.className = "personal-status won";
         }
       } else {
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
-        countdownEl.className = "countdown";
+        renderCountdown(gameData.timeRemainingMs);
         countdownLabel.textContent = "until pot is claimed";
         mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
         if (isLeading) {
@@ -800,7 +837,7 @@
       if (gameData.timeRemainingMs != null && gameData.timeRemainingMs > 0) {
         gameData.timeRemainingMs = Math.max(0, gameData.timeRemainingMs - 1000);
         if (gameData.timeRemainingMs <= 0) gameData.timerExpired = true;
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
+        renderCountdown(gameData.timeRemainingMs);
         if (gameData.timerExpired) {
           countdownEl.textContent = "TIMER EXPIRED";
           countdownEl.className = "countdown expired";
