@@ -543,7 +543,13 @@
         hay.indexOf("suitable utxo") >= 0 ||
         hay.indexOf("insufficient") >= 0 ||
         hay.indexOf("consumedutxo") >= 0 ||
-        hay.indexOf("consumed utxo") >= 0;
+        hay.indexOf("consumed utxo") >= 0 ||
+        // Confirmed wording from the real-chain rejection (see speed-up spec).
+        hay.indexOf("requires a single base-currency utxo") >= 0 ||
+        hay.indexOf("single-input spend/transfer") >= 0 ||
+        hay.indexOf("single-input spend") >= 0 ||
+        hay.indexOf("transfer_funds flow") >= 0 ||
+        hay.indexOf("merge utxos first") >= 0;
       if (utxoClass) {
         const amt = amount ? String(amount) + "-token" : "single";
         return "Your tokens are split into small amounts, so the chain can't" +
