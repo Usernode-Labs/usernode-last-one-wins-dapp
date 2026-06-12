@@ -515,6 +515,51 @@
       errorMsg.textContent = msg || "";
     }
 
+    // Pull a human-readable string out of whatever sendTransaction rejected
+    // with — Error, string, or a plain object carrying message/code/reason.
+    function errorText(err) {
+      if (err == null) return "";
+      if (typeof err === "string") return err;
+      const parts = [];
+      if (err.message) parts.push(String(err.message));
+      if (err.reason && err.reason !== err.message) parts.push(String(err.reason));
+      if (err.code != null) parts.push("code " + String(err.code));
+      if (parts.length) return parts.join(" — ");
+      try { return JSON.stringify(err); } catch (_) { return String(err); }
+    }
+
+    // Classify a sendTransaction rejection. Returns a player-facing message.
+    // The single-input / insufficient-UTXO class is special-cased with an
+    // actionable hint (the chain's wallet RPC can't yet combine many small
+    // UTXOs into one payment — see the speed-up spec); everything else falls
+    // back to the caller's generic prefix so the raw text is still shown.
+    function describeSendError(err, genericPrefix, amount) {
+      const raw = errorText(err);
+      const hay = raw.toLowerCase();
+      const utxoClass =
+        hay.indexOf("single input") >= 0 ||
+        hay.indexOf("single-input") >= 0 ||
+        hay.indexOf("no suitable utxo") >= 0 ||
+        hay.indexOf("suitable utxo") >= 0 ||
+        hay.indexOf("insufficient") >= 0 ||
+        hay.indexOf("consumedutxo") >= 0 ||
+        hay.indexOf("consumed utxo") >= 0 ||
+        // Confirmed wording from the real-chain rejection (see speed-up spec).
+        hay.indexOf("requires a single base-currency utxo") >= 0 ||
+        hay.indexOf("single-input spend/transfer") >= 0 ||
+        hay.indexOf("single-input spend") >= 0 ||
+        hay.indexOf("transfer_funds flow") >= 0 ||
+        hay.indexOf("merge utxos first") >= 0;
+      if (utxoClass) {
+        const amt = amount ? String(amount) + "-token" : "single";
+        return "Your tokens are split into small amounts, so the chain can't" +
+          " combine them into one " + amt + " payment yet. Consolidate your" +
+          " wallet (send yourself a single payment of that size or more), then" +
+          " try again.";
+      }
+      return genericPrefix + (raw || String(err));
+    }
+
     /* ── Username helpers ────────────────────────────────────── */
     function last6(addr) { return addr ? addr.slice(-6) : ""; }
     function usernameSuffix(addr) { return addr ? "_" + last6(addr) : "_??????"; }
@@ -901,7 +946,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Send failed: " + (e.message || e));
+        console.error("[lastwin] entry sendTransaction failed", e);
+        showError(describeSendError(e, "Send failed: ", amount));
       }
     });
 
@@ -935,7 +981,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Speed-up failed: " + (e.message || e));
+        console.error("[lastwin] speed-up sendTransaction failed", e);
+        showError(describeSendError(e, "Speed-up failed: ", cost));
       }
     });
 
