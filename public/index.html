@@ -111,12 +111,41 @@
     /* Hero countdown */
     .hero { text-align: center; padding: 20px 0 16px; }
     .countdown {
-      font-size: 48px; font-weight: 800; letter-spacing: -1px;
+      font-size: 64px; font-weight: 900; letter-spacing: -2px;
       font-variant-numeric: tabular-nums; color: var(--fg);
-      line-height: 1.1;
+      line-height: 1.05;
+      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
+      transition: color 0.3s ease, text-shadow 0.3s ease, transform 0.3s ease;
     }
-    .countdown.expired { color: var(--gold); }
-    .countdown.waiting { color: var(--muted); font-size: 24px; font-weight: 500; }
+    .countdown.expired {
+      color: var(--gold);
+      text-shadow: 0 0 24px rgba(212, 175, 55, 0.5);
+    }
+    .countdown.waiting {
+      color: var(--muted); font-size: 24px; font-weight: 500;
+      letter-spacing: 0; text-shadow: none;
+    }
+    /* Red-alert urgency: < 5 minutes remaining */
+    .countdown.urgent {
+      color: #ff2d2d;
+      text-shadow: 0 0 12px rgba(255, 45, 45, 0.55), 0 0 28px rgba(255, 45, 45, 0.35);
+      animation: countdownPulse 1s ease-in-out infinite;
+    }
+    @keyframes countdownPulse {
+      0%, 100% {
+        transform: scale(1);
+        color: #ff4d4d;
+        text-shadow: 0 0 10px rgba(255, 45, 45, 0.45), 0 0 22px rgba(255, 45, 45, 0.25);
+      }
+      50% {
+        transform: scale(1.06);
+        color: #ff0000;
+        text-shadow: 0 0 18px rgba(255, 0, 0, 0.85), 0 0 40px rgba(255, 0, 0, 0.5);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .countdown.urgent { animation: none; transform: none; }
+    }
     .hero-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
     .pot {
       font-size: 40px; font-weight: 800; margin: 12px 0 2px;
@@ -193,6 +222,12 @@
     .entry-item .entry-from { color: var(--muted); font-size: 12px; }
     .entry-item .entry-amount { font-weight: 600; white-space: nowrap; }
     .entry-item .entry-time { font-size: 11px; color: var(--muted); }
+    .entry-addr {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px; color: var(--muted); opacity: 0.85; letter-spacing: 0.2px;
+    }
+    .entry-addr.self { color: var(--accent); opacity: 1; }
+    .round-entries .entry-addr { font-size: 10px; }
     .entry-item.payout {
       background: var(--gold-dim); border-color: var(--gold);
       cursor: pointer; user-select: none;
@@ -340,6 +375,7 @@
       <div class="round" id="roundLabel">Round 1</div>
       <div style="display:flex;align-items:center;gap:6px;">
         <button class="header-pill" id="usernamePill" type="button" title="Change username"><span id="usernameDisplay">...</span></button>
+        <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
@@ -377,6 +413,14 @@
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
       <p class="muted">All game state lives on the Usernode blockchain. The server tracks the timer and sends automated payouts. Tap anywhere outside this panel to close.</p>
+    </div>
+  </div>
+
+  <!-- Pot breakdown overlay -->
+  <div class="info-overlay" id="potOverlay">
+    <div class="info-content" id="potContent">
+      <h2>Pot Breakdown</h2>
+      <div id="potBreakdownBody"></div>
     </div>
   </div>
 
@@ -424,6 +468,7 @@
   (function () {
     /* ── Config ─────────────────────────────────────────────── */
     const GAME_POLL_MS = 4000;
+    const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // < 5 min remaining → red-alert flash
     const TX_SEND_OPTS = { timeoutMs: 180000, pollIntervalMs: 1500 };
     const EXPLORER_BASE = window.location.origin + "/explorer-api";
 
@@ -452,6 +497,10 @@
     const saveUsernameBtn = document.getElementById("saveUsernameBtn");
     const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
     const usernameTxProgress = document.getElementById("usernameTxProgress");
+    const potToggle = document.getElementById("potToggle");
+    const potOverlay = document.getElementById("potOverlay");
+    const potContent = document.getElementById("potContent");
+    const potBreakdownBody = document.getElementById("potBreakdownBody");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -469,6 +518,17 @@
       return s.slice(0, h) + "..." + s.slice(-h);
     }
 
+    // Secondary monospaced line showing the player's on-chain address.
+    // Returns null when `addr` is falsy so callers can skip appending it.
+    function addrLine(addr, isSelf) {
+      if (!addr) return null;
+      const el = document.createElement("div");
+      el.className = "entry-addr" + (isSelf ? " self" : "");
+      el.textContent = truncate(addr, 16);
+      el.title = addr;
+      return el;
+    }
+
     function formatCountdown(ms) {
       if (ms <= 0) return "00:00:00";
       const totalSec = Math.floor(ms / 1000);
@@ -479,6 +539,14 @@
       const pad = (n) => String(n).padStart(2, "0");
       if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
+    }
+
+    // Render the live countdown text and toggle the red-alert urgency
+    // state purely from the remaining time (client-side only).
+    function renderCountdown(ms) {
+      countdownEl.textContent = formatCountdown(ms);
+      const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
+      countdownEl.className = urgent ? "countdown urgent" : "countdown";
     }
 
     function speedupLabel() {
@@ -496,6 +564,51 @@
 
     function showError(msg) {
       errorMsg.textContent = msg || "";
+    }
+
+    // Pull a human-readable string out of whatever sendTransaction rejected
+    // with — Error, string, or a plain object carrying message/code/reason.
+    function errorText(err) {
+      if (err == null) return "";
+      if (typeof err === "string") return err;
+      const parts = [];
+      if (err.message) parts.push(String(err.message));
+      if (err.reason && err.reason !== err.message) parts.push(String(err.reason));
+      if (err.code != null) parts.push("code " + String(err.code));
+      if (parts.length) return parts.join(" — ");
+      try { return JSON.stringify(err); } catch (_) { return String(err); }
+    }
+
+    // Classify a sendTransaction rejection. Returns a player-facing message.
+    // The single-input / insufficient-UTXO class is special-cased with an
+    // actionable hint (the chain's wallet RPC can't yet combine many small
+    // UTXOs into one payment — see the speed-up spec); everything else falls
+    // back to the caller's generic prefix so the raw text is still shown.
+    function describeSendError(err, genericPrefix, amount) {
+      const raw = errorText(err);
+      const hay = raw.toLowerCase();
+      const utxoClass =
+        hay.indexOf("single input") >= 0 ||
+        hay.indexOf("single-input") >= 0 ||
+        hay.indexOf("no suitable utxo") >= 0 ||
+        hay.indexOf("suitable utxo") >= 0 ||
+        hay.indexOf("insufficient") >= 0 ||
+        hay.indexOf("consumedutxo") >= 0 ||
+        hay.indexOf("consumed utxo") >= 0 ||
+        // Confirmed wording from the real-chain rejection (see speed-up spec).
+        hay.indexOf("requires a single base-currency utxo") >= 0 ||
+        hay.indexOf("single-input spend/transfer") >= 0 ||
+        hay.indexOf("single-input spend") >= 0 ||
+        hay.indexOf("transfer_funds flow") >= 0 ||
+        hay.indexOf("merge utxos first") >= 0;
+      if (utxoClass) {
+        const amt = amount ? String(amount) + "-token" : "single";
+        return "Your tokens are split into small amounts, so the chain can't" +
+          " combine them into one " + amt + " payment yet. Consolidate your" +
+          " wallet (send yourself a single payment of that size or more), then" +
+          " try again.";
+      }
+      return genericPrefix + (raw || String(err));
     }
 
     /* ── Username helpers ────────────────────────────────────── */
@@ -638,8 +751,7 @@
           personalStatusEl.className = "personal-status won";
         }
       } else {
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
-        countdownEl.className = "countdown";
+        renderCountdown(gameData.timeRemainingMs);
         countdownLabel.textContent = "Until pot is claimed";
         mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
         if (isLeading) {
@@ -745,6 +857,8 @@
                 rt.className = "entry-time";
                 rt.textContent = formatTime(e.ts);
                 rl.appendChild(rf);
+                const reAddr = addrLine(e.from, eSelf);
+                if (reAddr) rl.appendChild(reAddr);
                 rl.appendChild(rt);
                 const ra = document.createElement("div");
                 ra.className = "entry-amount";
@@ -779,6 +893,8 @@
         timeEl.className = "entry-time";
         timeEl.textContent = formatTime(item.ts);
         left.appendChild(fromEl);
+        const addrEl = addrLine(item.from, isSelf);
+        if (addrEl) left.appendChild(addrEl);
         left.appendChild(timeEl);
 
         const amtEl = document.createElement("div");
@@ -794,13 +910,128 @@
       }
     }
 
+    /* ── Pot breakdown overlay render ───────────────────────── */
+    function pbContribRow(label, count, amount, gold) {
+      const row = document.createElement("div");
+      row.className = "entry-item";
+      const left = document.createElement("div");
+      const f = document.createElement("div");
+      f.className = "entry-from";
+      f.textContent = label + (count != null ? " · " + count + "×" : "");
+      left.appendChild(f);
+      const a = document.createElement("div");
+      a.className = "entry-amount";
+      if (gold) a.style.color = "var(--gold)";
+      a.textContent = String(amount);
+      row.appendChild(left);
+      row.appendChild(a);
+      return row;
+    }
+
+    function renderPotBreakdown() {
+      if (!potBreakdownBody) return;
+      potBreakdownBody.innerHTML = "";
+
+      const pot = gameData ? (gameData.potBalance || 0) : 0;
+      const entries = (gameData && gameData.entries) || [];
+      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0;
+      for (const e of entries) {
+        const amt = Number(e.amount) || 0;
+        if (e.kind === "speedup") { speedupsSum += amt; speedupsCount++; }
+        else { entriesSum += amt; entriesCount++; }
+      }
+      const recentSum = entriesSum + speedupsSum;
+      const earlier = Math.max(0, pot - recentSum);
+      const cost = (gameData && gameData.speedupCost) || 100;
+      const leader = gameData && gameData.lastSender;
+      const potEmpty = !leader || pot <= 0;
+
+      // Pot total
+      const potWrap = document.createElement("div");
+      potWrap.style.textAlign = "center";
+      potWrap.style.marginBottom = "14px";
+      const potVal = document.createElement("div");
+      potVal.className = "pot";
+      potVal.style.margin = "0";
+      potVal.textContent = String(pot);
+      const potLbl = document.createElement("div");
+      potLbl.className = "pot-label";
+      potLbl.textContent = "tokens in the pot";
+      potWrap.appendChild(potVal);
+      potWrap.appendChild(potLbl);
+      potBreakdownBody.appendChild(potWrap);
+
+      // Distribution summary (static — winner takes all)
+      const dist = document.createElement("div");
+      dist.innerHTML =
+        '<p style="margin:0 0 6px;font-weight:600;">Winner takes all</p>' +
+        '<ul style="margin:0 0 12px;padding-left:18px;">' +
+        '<li><strong>100%</strong> of the pot goes to the winner</li>' +
+        '<li><strong>0</strong> fees</li>' +
+        '<li>Nothing is kept by the house</li>' +
+        '<li>No rollover — the pot resets to 0 each round</li>' +
+        '</ul>';
+      potBreakdownBody.appendChild(dist);
+
+      if (potEmpty) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "The pot is empty — be the first to enter!";
+        potBreakdownBody.appendChild(empty);
+      } else {
+        // Contribution breakdown (recent activity; reconciles to pot total)
+        const title = document.createElement("div");
+        title.className = "section-title";
+        title.textContent = "Recent contributions";
+        potBreakdownBody.appendChild(title);
+
+        const list = document.createElement("div");
+        list.className = "entry-list";
+        list.appendChild(pbContribRow("Entries", entriesCount, entriesSum, false));
+        list.appendChild(pbContribRow("⚡ Speed-ups", speedupsCount, speedupsSum, true));
+        if (earlier > 0) list.appendChild(pbContribRow("Earlier contributions", null, earlier, false));
+        potBreakdownBody.appendChild(list);
+
+        if (earlier > 0) {
+          const recNote = document.createElement("p");
+          recNote.className = "muted";
+          recNote.style.marginTop = "8px";
+          recNote.textContent = "Split reflects recent activity; the pot total above is authoritative.";
+          potBreakdownBody.appendChild(recNote);
+        }
+
+        // Current leader / would-be winner
+        const leaderLine = document.createElement("div");
+        leaderLine.className = "personal-status";
+        leaderLine.style.marginTop = "14px";
+        const isSelf = myAddress && leader === myAddress;
+        if (gameData.timerExpired || gameData.payoutInProgress) {
+          leaderLine.classList.add("won");
+          leaderLine.textContent = (isSelf ? "You" : displayName(leader)) + " won this round — full pot paid out";
+        } else {
+          leaderLine.classList.add(isSelf ? "leading" : "trailing");
+          leaderLine.textContent = isSelf
+            ? "If the timer runs out now, you win " + pot + " tokens"
+            : "If the timer runs out now, " + displayName(leader) + " wins " + pot + " tokens";
+        }
+        potBreakdownBody.appendChild(leaderLine);
+      }
+
+      // Speed-up note (always)
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.style.marginTop = "12px";
+      note.textContent = "⚡ A speed-up sends " + cost + "+ tokens — the full amount joins the pot. It buys a faster clock, not a discount or a fee.";
+      potBreakdownBody.appendChild(note);
+    }
+
     /* ── Countdown tick (1s local updates between polls) ───── */
     setInterval(() => {
       if (!gameData || !gameData.lastSender || gameData.timerExpired) return;
       if (gameData.timeRemainingMs != null && gameData.timeRemainingMs > 0) {
         gameData.timeRemainingMs = Math.max(0, gameData.timeRemainingMs - 1000);
         if (gameData.timeRemainingMs <= 0) gameData.timerExpired = true;
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
+        renderCountdown(gameData.timeRemainingMs);
         if (gameData.timerExpired) {
           countdownEl.textContent = "TIMER EXPIRED";
           countdownEl.className = "countdown expired";
@@ -833,6 +1064,7 @@
           window.usernode.serverCacheUrl = "/__usernode/cache/" + appPubkey;
         }
         render();
+        if (potOverlay && potOverlay.classList.contains("open")) renderPotBreakdown();
         statusDot.className = "status-dot ok";
         statusText.textContent = "connected";
       } catch (e) {
@@ -880,7 +1112,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Send failed: " + (e.message || e));
+        console.error("[lastwin] entry sendTransaction failed", e);
+        showError(describeSendError(e, "Send failed: ", amount));
       }
     });
 
@@ -914,7 +1147,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Speed-up failed: " + (e.message || e));
+        console.error("[lastwin] speed-up sendTransaction failed", e);
+        showError(describeSendError(e, "Speed-up failed: ", cost));
       }
     });
 
@@ -1031,11 +1265,26 @@
       const infoToggle = document.getElementById("infoToggle");
       const infoOverlay = document.getElementById("infoOverlay");
       const infoContent = document.getElementById("infoContent");
+
+      // Overlays are mutually exclusive — opening one closes the others.
+      function closeOverlays() {
+        if (infoOverlay) infoOverlay.classList.remove("open");
+        if (potOverlay) potOverlay.classList.remove("open");
+      }
+
       if (infoToggle && infoOverlay) {
-        infoToggle.addEventListener("click", () => infoOverlay.classList.add("open"));
+        infoToggle.addEventListener("click", () => { closeOverlays(); infoOverlay.classList.add("open"); });
         infoOverlay.addEventListener("click", (e) => {
           if (!infoContent.contains(e.target)) {
             infoOverlay.classList.remove("open");
+          }
+        });
+      }
+      if (potToggle && potOverlay) {
+        potToggle.addEventListener("click", () => { closeOverlays(); renderPotBreakdown(); potOverlay.classList.add("open"); });
+        potOverlay.addEventListener("click", (e) => {
+          if (!potContent.contains(e.target)) {
+            potOverlay.classList.remove("open");
           }
         });
       }
