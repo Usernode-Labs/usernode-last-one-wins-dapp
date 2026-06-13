@@ -89,6 +89,9 @@ Memos are JSON. Last One Wins only acts on these:
 - `game → game (consolidate)`: `{"app":"lastwin","type":"consolidate"}` (UTXO
   consolidation self-send when a single-UTXO payout fails — see "UTXO
   consolidation" below).
+- `game → game (mega seed)`: `{"app":"lastwin","type":"mega_seed","round":<n>}`
+  (treasury self-send that seeds MEGA_ROUND_POT tokens into the pot when a
+  Monday Mega Round starts — see "Monday Mega Rounds" below).
 
 ## Sidecar dependency
 

@@ -165,6 +165,14 @@
       margin-top: 10px; font-size: 13px; font-weight: 700;
       color: var(--gold); min-height: 18px;
     }
+    .mega-banner {
+      font-size: 13px; font-weight: 700;
+      color: var(--gold); margin: 8px 0 4px; text-align: center;
+    }
+    .countdown.countdown-mega {
+      color: var(--gold);
+      text-shadow: 0 0 18px rgba(250, 204, 21, 0.35);
+    }
 
     hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 
@@ -442,6 +450,7 @@
       <div class="pot-label">tokens in the pot</div>
       <div class="hero-copy">Every entry increases the prize</div>
       <div class="personal-status" id="personalStatus"></div>
+      <div class="mega-banner hide" id="megaBanner"></div>
       <div class="streak-banner hide" id="streakBanner"></div>
     </div>
 
@@ -487,6 +496,7 @@
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
     const personalStatusEl = document.getElementById("personalStatus");
+    const megaBanner = document.getElementById("megaBanner");
     const streakBanner = document.getElementById("streakBanner");
     const streakInfoText = document.getElementById("streakInfoText");
     const mechanicLabelEl = document.getElementById("mechanicLabel");
@@ -572,7 +582,9 @@
     function renderCountdown(ms) {
       countdownEl.textContent = formatCountdown(ms);
       const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
-      countdownEl.className = urgent ? "countdown urgent" : "countdown";
+      let cls = urgent ? "countdown urgent" : "countdown";
+      if (!urgent && gameData && gameData.isMegaRound) cls += " countdown-mega";
+      countdownEl.className = cls;
     }
 
     function speedupLabel() {
@@ -597,13 +609,16 @@
     function wonMessage(winnerAddr, isSelf) {
       const streak = predictWinnerStreak();
       const min = (gameData && gameData.streakBonusMin) || 2;
+      const isMega = gameData && gameData.isMegaRound;
       if (isSelf) {
+        const megaSuffix = isMega ? " 🏆 Mega Round win!" : "";
         return streak >= min
-          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!"
-          : "You won! Payout incoming...";
+          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!" + megaSuffix
+          : "You won! Payout incoming..." + megaSuffix;
       }
       const note = streak >= min ? " 🔥 " + streak + "-win streak!" : "";
-      return displayName(winnerAddr) + " won this round!" + note;
+      const megaNote = isMega ? " 🏆 Mega Round!" : "";
+      return displayName(winnerAddr) + " won this round!" + note + megaNote;
     }
 
     function formatTime(ms) {
@@ -774,8 +789,17 @@
         }
       }
 
-      roundLabel.textContent = "Round " + gameData.roundNumber;
+      roundLabel.textContent = gameData.isMegaRound
+        ? "🏆 Mega Round " + gameData.roundNumber
+        : "Round " + gameData.roundNumber;
       potDisplay.textContent = String(gameData.potBalance);
+      if (gameData.isMegaRound) {
+        megaBanner.textContent = "🏆 Monday Mega Round · " + gameData.megaRoundPot + " tokens guaranteed";
+        megaBanner.classList.remove("hide");
+      } else {
+        megaBanner.textContent = "";
+        megaBanner.classList.add("hide");
+      }
       updateSpeedupBtn();
 
       const isLeading = myAddress && gameData.lastSender === myAddress;

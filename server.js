@@ -49,6 +49,7 @@ loadEnvFile();
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
+const FORCE_MEGA = LOCAL_DEV && process.argv.includes("--force-mega");
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // ── Game config ──────────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ const game = createLastOneWins({
   localDev: LOCAL_DEV,
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
   pushStore: pushEnabled ? pushStore : null,
+  forceMega: FORCE_MEGA,
 });
 // game.start() runs the payout timer (checks every 5s for an expired round
 // and triggers /wallet/send when one is found); chain plumbing (recipient +

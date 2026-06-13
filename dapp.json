@@ -41,7 +41,19 @@
       "key": "VAPID_SUBJECT",
       "description": "Contact string for VAPID push authentication. Must be a mailto: address or https:// URL.",
       "required": false,
-      "default": "mailto:admin@example.com"
+      "default": "https://social-vibecoding.usernodelabs.org"
+    },
+    {
+      "key": "MEGA_ROUND_ENABLED",
+      "description": "Set to \"false\" to disable Monday Mega Rounds without a code change. Defaults to enabled.",
+      "required": false,
+      "default": "true"
+    },
+    {
+      "key": "MEGA_ROUND_POT",
+      "description": "Treasury seed amount in tokens credited to the pot at the start of each Monday Mega Round.",
+      "required": false,
+      "default": "1000"
     }
   ]
 }
