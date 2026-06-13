@@ -81,6 +81,8 @@ Memos are JSON. Last One Wins only acts on these:
 - `user → game (entry)`:    `{"app":"lastwin","type":"entry"}`
 - `user → game (speed-up)`: `{"app":"lastwin","type":"speedup"}` (send ≥100
   tokens — see "Speed-up action" below)
+- `user → game (accelerate)`: `{"app":"lastwin","type":"accelerate"}` (send
+  ≥1000 tokens — see "Accelerate action" below)
 - `user → game (username)`: `{"app":"lastwin","type":"set_username","username":"<name>"}`
 - `game → winner (payout)`: `{"app":"lastwin","type":"payout","round":<n>,"winner":"<addr>"}`
 - `game → winner (streak bonus)`: `{"app":"lastwin","type":"bonus","round":<n>,"winner":"<addr>","streak":<count>,"amount":<tokens>}`
@@ -143,6 +145,21 @@ sidecar usernode build that exposes those endpoints.
   dropped. In `--local-dev`, the speed-up fuse is shortened to 30s
   (`MOCK_SPEEDUP_DURATION_MS`) so it stays shorter than the 2-min mock base.
   `/__game/state` exposes `speedupCost` and `speedupDurationMs` for the UI.
+- Accelerate action: a player can send `ACCELERATE_COST` (1000) tokens with
+  an `{"app":"lastwin","type":"accelerate"}` memo to set a fresh 10-minute
+  fuse (`ACCELERATE_DURATION_MS`) on the round and become the new last sender.
+  It behaves exactly like the speed-up branch — same `tx.ts >= lastEntryTs`
+  out-of-order guard, `state.timerExpiresAt = ts + 10min`, full amount grows
+  the pot, takes the lead — just with a tighter fuse and a higher cost. The
+  10-min deadline is an ordinary countdown: a regular entry still resets it to
+  `ts + base`. An underfunded accelerate memo (< 1000) falls back to
+  base-duration entry semantics so tokens are never dropped. Entries are
+  recorded with `kind:"accelerate"`. In `--local-dev`, the fuse is shortened
+  to 20s (`MOCK_ACCELERATE_DURATION_MS`) so it stays shorter than the 30s mock
+  speed-up. `/__game/state` exposes `accelerateCost` and `accelerateDurationMs`
+  for the UI. `server.js` seeds obviously-fake "StagingDemo…" accelerate txs
+  via `processTransaction` under `--local-dev`/`USERNODE_ENV=staging` so the
+  new activity row and Pot Breakdown line are verifiable (no-op in production).
 - Win streak bonuses: a player who wins consecutive rounds earns an
   operator-funded bonus on top of the full pot. Streaks are **derived,
   not persisted** — `applyStreak()` recomputes `state.streaks` (pubkey →
