@@ -45,6 +45,7 @@ function createLastOneWins(opts) {
   const timerDurationMs = opts.timerDurationMs || 14400000;
   const localDev = !!opts.localDev;
   const mockTransactions = opts.mockTransactions || null;
+  const pushStore = opts.pushStore || null;
 
   const MOCK_TIMER_DURATION_MS = 120000;
 
@@ -74,6 +75,7 @@ function createLastOneWins(opts) {
     entries: [],
     pastRounds: [],
     payoutInProgress: false,
+    urgentNotified: false,  // true once the ≤60s push has been sent for this round
     // Win streaks (derived from the ordered payout sequence, not persisted).
     streaks: new Map(),   // pubkey → { count, lastWonRound }
     currentStreak: null,  // { winner, count, lastRound } or null before any payout
@@ -203,9 +205,15 @@ function createLastOneWins(opts) {
       if (amount <= 0) return;
       state.potBalance += amount;
       if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        const prevSender = state.lastSender;
         state.lastSender = tx.from;
         state.lastEntryTs = tx.ts;
         state.timerExpiresAt = tx.ts + getTimerDuration();
+        if (prevSender && prevSender !== tx.from && pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(prevSender), {
+            title: "Last One Wins", body: "Someone just took the lead! Enter again before time runs out.", tag: "overtaken",
+          });
+        }
       }
       state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: "entry" });
       console.log(`[game] entry: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
@@ -218,9 +226,15 @@ function createLastOneWins(opts) {
       // tokens are never dropped. Out-of-order guard mirrors the entry path.
       const isSpeedup = amount >= SPEEDUP_COST;
       if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        const prevSender = state.lastSender;
         state.lastSender = tx.from;
         state.lastEntryTs = tx.ts;
         state.timerExpiresAt = tx.ts + (isSpeedup ? getSpeedupDuration() : getTimerDuration());
+        if (prevSender && prevSender !== tx.from && pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(prevSender), {
+            title: "Last One Wins", body: "Someone just took the lead! Enter again before time runs out.", tag: "overtaken",
+          });
+        }
       }
       state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isSpeedup ? "speedup" : "entry" });
       console.log(`[game] ${isSpeedup ? "speedup" : "entry(speedup-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
@@ -245,6 +259,12 @@ function createLastOneWins(opts) {
         state.lastEntryTs = null;
         state.timerExpiresAt = null;
         state.entries = [];
+        state.urgentNotified = false;
+        if (pushStore) {
+          pushStore.sendPush(pushStore.getAll(), {
+            title: "Last One Wins", body: "Round " + state.roundNumber + " has started — be the first to enter!", tag: "round-started",
+          });
+        }
       }
       console.log(`[game] payout detected: round ${round}, advancing to round ${state.roundNumber}`);
     } else if (memo.type === "bonus" && tx.from === appPubkey) {
@@ -392,7 +412,14 @@ function createLastOneWins(opts) {
   async function checkPayout() {
     if (state.payoutInProgress) return;
     if (!state.lastSender || !state.lastEntryTs) return;
-    if (getTimeRemaining() > 0) return;
+    const remaining = getTimeRemaining();
+    if (pushStore && !state.urgentNotified && remaining != null && remaining > 0 && remaining <= 60000) {
+      state.urgentNotified = true;
+      pushStore.sendPush(pushStore.getAll(), {
+        title: "⏰ Hurry!", body: "Only " + Math.ceil(remaining / 1000) + "s left — enter now to win " + state.potBalance + " tokens!", tag: "timer-urgent",
+      });
+    }
+    if (remaining > 0) return;
 
     // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
     // Suppress payout for pre-deploy entries so the 8h→4h timer change
@@ -463,6 +490,11 @@ function createLastOneWins(opts) {
           id: `payout_${round}_${Date.now()}`,
         };
         processTransaction(syntheticTx);
+        if (pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(winner), {
+            title: "🏆 You won!", body: "You won " + amount + " tokens! Payout is on its way.", tag: "you-won",
+          });
+        }
         // Streak bonus is best-effort and runs after the round has advanced;
         // it never blocks or reduces the main payout above.
         await maybeSendStreakBonus(winner, round, amount);
@@ -512,6 +544,7 @@ function createLastOneWins(opts) {
     state.entries = [];
     state.pastRounds = [];
     state.payoutInProgress = false;
+    state.urgentNotified = false;
     state.streaks.clear();
     state.currentStreak = null;
     signerConfigured = false;

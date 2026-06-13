@@ -63,6 +63,8 @@
       display: flex; align-items: center; justify-content: center;
     }
     .header-icon:hover { border-color: var(--accent); color: var(--accent); }
+    .header-icon.push-active { border-color: var(--gold); color: var(--gold); }
+    .header-icon.push-active:hover { border-color: var(--gold); color: var(--gold); }
 
     /* Info overlay */
     .info-overlay {
@@ -380,6 +382,7 @@
       <div style="display:flex;align-items:center;gap:6px;">
         <button class="header-pill" id="usernamePill" type="button" title="Change username"><span id="usernameDisplay">...</span></button>
         <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
+        <button class="header-icon" id="pushToggle" type="button" title="Toggle notifications" style="display:none">🔔</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
@@ -509,6 +512,7 @@
     const potOverlay = document.getElementById("potOverlay");
     const potContent = document.getElementById("potContent");
     const potBreakdownBody = document.getElementById("potBreakdownBody");
+    const pushToggle = document.getElementById("pushToggle");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -518,8 +522,22 @@
     let appPubkey = null;
     let myUsername = null;
     let usernameMap = {};
+    let pushReg = null;
+    let pushSub = null;
 
     /* ── Helpers ────────────────────────────────────────────── */
+    function setBellActive(active) {
+      if (!pushToggle) return;
+      pushToggle.classList.toggle("push-active", active);
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(base64);
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+
     function truncate(s, n) {
       if (!s || s.length <= n) return s || "";
       const h = Math.floor((n - 3) / 2);
@@ -1350,6 +1368,50 @@
           }
         });
       }
+
+      // Push notifications — show bell only when server has VAPID keys configured
+      // and the browser supports service workers + PushManager.
+      try {
+        const pushKeyResp = await fetch("/__push/vapid-public-key");
+        if (pushKeyResp.ok) {
+          const { publicKey } = await pushKeyResp.json();
+          if (publicKey && "serviceWorker" in navigator && "PushManager" in window) {
+            pushToggle.style.display = "";
+            pushReg = await navigator.serviceWorker.register("/sw.js");
+            await navigator.serviceWorker.ready;
+            pushSub = await pushReg.pushManager.getSubscription();
+            setBellActive(!!pushSub);
+
+            pushToggle.addEventListener("click", async () => {
+              try {
+                if (pushSub) {
+                  await pushSub.unsubscribe();
+                  await fetch("/__push/subscribe", {
+                    method: "DELETE",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ endpoint: pushSub.endpoint }),
+                  });
+                  pushSub = null;
+                  setBellActive(false);
+                } else {
+                  pushSub = await pushReg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                  });
+                  await fetch("/__push/subscribe", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ subscription: pushSub, address: myAddress || null }),
+                  });
+                  setBellActive(true);
+                }
+              } catch (e) {
+                console.warn("[push] toggle error:", e);
+              }
+            });
+          }
+        }
+      } catch (_) {}
     }
 
     init();
