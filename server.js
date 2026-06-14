@@ -47,6 +47,7 @@ loadEnvFile();
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
+const IS_STAGING = process.env.USERNODE_ENV === "staging";
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // ── Game config ──────────────────────────────────────────────────────────────
@@ -87,6 +88,89 @@ const game = createLastOneWins({
 // and triggers /wallet/send when one is found); chain plumbing (recipient +
 // sender pollers, backfill, mock drain) is in gameCache below.
 game.start();
+
+// ── Demo seed (staging + local-dev only) ─────────────────────────────────────
+// The new participant-count / winner-history / odds / animation features all
+// render against game state that starts empty. Staging containers run in
+// production mode against a possibly-quiet pot, so seed a few past rounds and
+// a populated current round so a tester sees non-empty sections immediately.
+// Strictly a no-op in production: gated on IS_STAGING || LOCAL_DEV. In
+// local-dev the synthetic txs go through the mock store's drain loop; in
+// staging they're fed directly to the game state machine. Real on-chain txs
+// (if any) still flow in through gameCache and take precedence by round number.
+function buildDemoSeed(potPubkey) {
+  const A = "ut1_demo_alice_0000000000000000aaaaaa";
+  const B = "ut1_demo_bob_00000000000000000000bbbbbb";
+  const C = "ut1_demo_carol_000000000000000000cccccc";
+  const APP = "lastwin";
+  const now = Date.now();
+  let seq = 0;
+  const txs = [];
+  const iso = (ms) => new Date(ms).toISOString();
+  const id = (tag) => `demo_${tag}_${seq++}`;
+
+  const setName = (from, username, ms) => txs.push({
+    id: id("name"), from_pubkey: from, destination_pubkey: potPubkey, amount: 0,
+    memo: JSON.stringify({ app: APP, type: "set_username", username }), created_at: iso(ms),
+  });
+  const entry = (from, amount, ms) => txs.push({
+    id: id("entry"), from_pubkey: from, destination_pubkey: potPubkey, amount,
+    memo: JSON.stringify({ app: APP, type: "entry" }), created_at: iso(ms),
+  });
+  const payout = (winner, amount, round, ms) => txs.push({
+    id: id("payout"), from_pubkey: potPubkey, destination_pubkey: winner, amount,
+    memo: JSON.stringify({ app: APP, type: "payout", round, winner }), created_at: iso(ms),
+  });
+  const bonus = (winner, amount, round, streak, ms) => txs.push({
+    id: id("bonus"), from_pubkey: potPubkey, destination_pubkey: winner, amount,
+    memo: JSON.stringify({ app: APP, type: "bonus", round, winner, streak, amount }), created_at: iso(ms),
+  });
+
+  const H = 3600000;
+  // Display names (obviously fake demo accounts).
+  setName(A, "demo-alice", now - 4 * H);
+  setName(B, "demo-bob", now - 4 * H + 1000);
+  setName(C, "demo-carol", now - 4 * H + 2000);
+
+  // Round 1 — carol wins.
+  entry(A, 10, now - 3 * H);
+  entry(B, 20, now - 3 * H + 60000);
+  entry(C, 15, now - 3 * H + 120000);
+  payout(C, 45, 1, now - 3 * H + 180000);
+
+  // Round 2 — alice wins.
+  entry(B, 30, now - 2 * H);
+  entry(A, 25, now - 2 * H + 60000);
+  payout(A, 55, 2, now - 2 * H + 120000);
+
+  // Round 3 — alice wins again (consecutive → 2-win streak bonus).
+  entry(C, 40, now - 1 * H);
+  entry(A, 60, now - 1 * H + 60000);
+  payout(A, 100, 3, now - 1 * H + 120000);
+  bonus(A, 10, 3, 2, now - 1 * H + 121000);
+
+  // Round 4 — current, live. alice leads. 3 participants, 6 entries.
+  entry(A, 50, now - 300000);
+  entry(B, 30, now - 240000);
+  entry(C, 40, now - 180000);
+  entry(A, 20, now - 120000);
+  entry(B, 15, now - 60000);
+  entry(A, 10, now - 5000);
+
+  return txs;
+}
+
+if (IS_STAGING || LOCAL_DEV) {
+  const seed = buildDemoSeed(APP_PUBKEY);
+  if (LOCAL_DEV && mockApi.transactions) {
+    // Drained through the mock-mode loop in gameCache, exercising the live path.
+    for (const tx of seed) mockApi.transactions.push(tx);
+  } else {
+    // Staging: feed the state machine directly (chain pollers stay empty).
+    for (const tx of seed) game.processTransaction(tx);
+  }
+  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"})`);
+}
 
 const gameCache = createAppStateCache({
   name: "lastwin",

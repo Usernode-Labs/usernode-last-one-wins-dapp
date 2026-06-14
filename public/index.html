@@ -151,7 +151,25 @@
       font-size: 40px; font-weight: 800; margin: 12px 0 2px;
       color: var(--gold); line-height: 1.1;
     }
+    /* Pot pulse — fired when the pot balance grows between polls */
+    @keyframes potPulse {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.08); }
+    }
+    .pot.pot-updated { animation: potPulse 0.3s ease-in-out forwards; }
+    /* Brief hero shimmer accompanying a pot increase */
+    @keyframes heroShimmer {
+      0%   { background: rgba(250, 204, 21, 0.12); }
+      100% { background: transparent; }
+    }
+    .hero.pot-updated { animation: heroShimmer 1s ease-out forwards; }
     .pot-label { font-size: 13px; color: var(--muted); }
+    .participants-label { font-size: 13px; color: var(--muted); margin-top: 4px; min-height: 18px; }
+    .odds-line { font-size: 13px; color: var(--muted); margin-top: 4px; min-height: 18px; }
+    .odds-line .odds-detail { font-size: 11px; opacity: 0.75; }
+    @media (prefers-reduced-motion: reduce) {
+      .pot.pot-updated, .hero.pot-updated { animation: none; }
+    }
     .hero-copy { font-size: 13px; color: var(--muted); margin-top: 8px; }
     .personal-status {
       margin-top: 14px; font-size: 14px; font-weight: 500; min-height: 20px;
@@ -226,6 +244,25 @@
     .entry-item .entry-from { color: var(--muted); font-size: 12px; }
     .entry-item .entry-amount { font-weight: 600; white-space: nowrap; }
     .entry-item .entry-time { font-size: 11px; color: var(--muted); }
+    /* New-entry flash — applied to rows whose tx first appears on a poll */
+    @keyframes entryHighlight {
+      from { background: rgba(110, 168, 254, 0.25); }
+      to   { background: transparent; }
+    }
+    .entry-item.entry-new { animation: entryHighlight 0.5s ease-out forwards; }
+    @media (prefers-reduced-motion: reduce) {
+      .entry-item.entry-new { animation: none; }
+    }
+    /* Winner history rows — compact, read-only, two columns */
+    .winner-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      border: 1px solid var(--border);
+    }
+    .winner-item .winner-from { color: var(--fg); font-size: 13px; font-weight: 500; }
+    .winner-item .winner-round { color: var(--muted); font-size: 11px; }
+    .winner-item .winner-amount { font-weight: 700; white-space: nowrap; color: var(--gold); }
+    .winner-item .winner-bonus { font-size: 11px; color: var(--gold); font-weight: 600; margin-top: 2px; }
     .entry-addr {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px; color: var(--muted); opacity: 0.85; letter-spacing: 0.2px;
@@ -437,8 +474,10 @@
       <div class="hero-copy" id="mechanicLabel">Each entry resets the timer &mdash; last one wins</div>
       <div class="pot" id="potDisplay">0</div>
       <div class="pot-label">tokens in the pot</div>
+      <div class="participants-label" id="participantsLabel"></div>
       <div class="hero-copy">Every entry increases the prize</div>
       <div class="personal-status" id="personalStatus"></div>
+      <div class="odds-line hide" id="oddsLine" title="Based on your share of entries this round"></div>
       <div class="streak-banner hide" id="streakBanner"></div>
     </div>
 
@@ -447,6 +486,12 @@
     <div class="section-title">Recent Activity</div>
     <div class="entry-list" id="entryList">
       <div class="empty-state">No entries yet</div>
+    </div>
+
+    <div id="winnerHistory" style="display:none;">
+      <hr />
+      <div class="section-title">Winner History</div>
+      <div class="entry-list" id="winnerList"></div>
     </div>
   </div>
 
@@ -483,6 +528,11 @@
     const countdownEl = document.getElementById("countdown");
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
+    const heroEl = document.querySelector(".hero");
+    const participantsLabel = document.getElementById("participantsLabel");
+    const oddsLine = document.getElementById("oddsLine");
+    const winnerHistory = document.getElementById("winnerHistory");
+    const winnerList = document.getElementById("winnerList");
     const personalStatusEl = document.getElementById("personalStatus");
     const streakBanner = document.getElementById("streakBanner");
     const streakInfoText = document.getElementById("streakInfoText");
@@ -518,6 +568,12 @@
     let appPubkey = null;
     let myUsername = null;
     let usernameMap = {};
+    // Entry-flash + pot-pulse tracking. seenEntryTxIds is seeded with the full
+    // entry set on the first poll so the initial paint doesn't animate the
+    // whole list; only entries that newly appear on later polls flash.
+    const seenEntryTxIds = new Set();
+    let seededEntries = false;
+    let prevPotBalance = null;
 
     /* ── Helpers ────────────────────────────────────────────── */
     function truncate(s, n) {
@@ -757,8 +813,32 @@
       }
 
       roundLabel.textContent = "Round " + gameData.roundNumber;
+
+      // Pot pulse: animate when the pot grows between polls (never on first load).
+      if (prevPotBalance != null && gameData.potBalance > prevPotBalance) {
+        potDisplay.classList.remove("pot-updated");
+        if (heroEl) heroEl.classList.remove("pot-updated");
+        // Force reflow so re-adding the class restarts the animation.
+        void potDisplay.offsetWidth;
+        potDisplay.classList.add("pot-updated");
+        if (heroEl) heroEl.classList.add("pot-updated");
+        setTimeout(() => {
+          potDisplay.classList.remove("pot-updated");
+          if (heroEl) heroEl.classList.remove("pot-updated");
+        }, 1000);
+      }
+      prevPotBalance = gameData.potBalance;
+
       potDisplay.textContent = String(gameData.potBalance);
       updateSpeedupBtn();
+
+      // Participant count (unique entrants this round, server-computed).
+      const pc = gameData.participantCount || 0;
+      if (pc <= 0) {
+        participantsLabel.textContent = gameData.lastSender ? "" : "Be the first to enter!";
+      } else {
+        participantsLabel.textContent = pc + (pc === 1 ? " player this round" : " players this round");
+      }
 
       const isLeading = myAddress && gameData.lastSender === myAddress;
 
@@ -791,6 +871,29 @@
           personalStatusEl.className = "personal-status trailing";
           sendBtn.textContent = "Enter Now";
         }
+      }
+
+      // Estimated odds: the player's share of this round's entry count. Shown
+      // only while a live round has the player among its entrants. Hidden when
+      // the player hasn't entered, before the first entry, or once expired.
+      const entryCountByAddr = {};
+      for (const e of (gameData.entries || [])) {
+        entryCountByAddr[e.from] = (entryCountByAddr[e.from] || 0) + 1;
+      }
+      const myEntries = myAddress ? (entryCountByAddr[myAddress] || 0) : 0;
+      const totalEntries = (gameData.entries || []).length;
+      if (myEntries > 0 && totalEntries > 0 && gameData.lastSender && !gameData.timerExpired) {
+        const pct = Math.round((myEntries / totalEntries) * 100);
+        oddsLine.innerHTML = "";
+        oddsLine.appendChild(document.createTextNode("~" + pct + "% odds this round "));
+        const detail = document.createElement("span");
+        detail.className = "odds-detail";
+        detail.textContent = "(" + myEntries + " of " + totalEntries + " entries)";
+        oddsLine.appendChild(detail);
+        oddsLine.classList.remove("hide");
+      } else {
+        oddsLine.textContent = "";
+        oddsLine.classList.add("hide");
       }
 
       // Active win-streak banner. currentStreak holds the most recent round's
@@ -855,6 +958,8 @@
         empty.className = "empty-state";
         empty.textContent = "No entries yet \u2014 be the first!";
         entryList.appendChild(empty);
+        seededEntries = true;
+        renderWinnerHistory();
         return;
       }
 
@@ -967,10 +1072,67 @@
 
         el.appendChild(left);
         el.appendChild(amtEl);
+
+        // Entry flash: a row whose tx id is appearing for the first time (and
+        // not on the very first poll) glows briefly. Payout rows don't flash.
+        if (item.type !== "payout" && item.txId) {
+          if (seededEntries && !seenEntryTxIds.has(item.txId)) {
+            el.classList.add("entry-new");
+            setTimeout(() => el.classList.remove("entry-new"), 500);
+          }
+          seenEntryTxIds.add(item.txId);
+        }
+
         entryList.appendChild(el);
         if (buildRoundEntries && expandedRounds.has(item.round)) {
           entryList.appendChild(buildRoundEntries());
         }
+      }
+      // After the first render, future polls may animate genuinely-new entries.
+      seededEntries = true;
+
+      renderWinnerHistory();
+    }
+
+    /* ── Winner history ─────────────────────────────────────── */
+    function renderWinnerHistory() {
+      const rounds = (gameData && gameData.pastRounds) || [];
+      if (rounds.length === 0) {
+        winnerHistory.style.display = "none";
+        winnerList.innerHTML = "";
+        return;
+      }
+      winnerHistory.style.display = "";
+      winnerList.innerHTML = "";
+      for (const r of rounds.slice(0, 10)) {
+        const row = document.createElement("div");
+        row.className = "winner-item";
+
+        const left = document.createElement("div");
+        const who = document.createElement("div");
+        who.className = "winner-from";
+        const isSelf = myAddress && r.winner === myAddress;
+        who.textContent = isSelf ? "You" : displayName(r.winner);
+        if (isSelf) who.style.color = "var(--accent)";
+        const roundLbl = document.createElement("div");
+        roundLbl.className = "winner-round";
+        roundLbl.textContent = "Round " + r.round;
+        left.appendChild(who);
+        left.appendChild(roundLbl);
+        if (r.bonus && r.bonus.amount > 0) {
+          const bonusEl = document.createElement("div");
+          bonusEl.className = "winner-bonus";
+          bonusEl.textContent = "🔥 " + r.bonus.streak + "-win streak +" + r.bonus.amount;
+          left.appendChild(bonusEl);
+        }
+
+        const amt = document.createElement("div");
+        amt.className = "winner-amount";
+        amt.textContent = "+" + (r.amount || 0);
+
+        row.appendChild(left);
+        row.appendChild(amt);
+        winnerList.appendChild(row);
       }
     }
 
