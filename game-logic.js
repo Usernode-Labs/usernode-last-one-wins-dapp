@@ -54,6 +54,13 @@ function createLastOneWins(opts) {
   const SPEEDUP_DURATION_MS = 1800000; // 30 min
   const MOCK_SPEEDUP_DURATION_MS = 30000; // 30s — shorter than the 2-min mock base
 
+  // Accelerate action: spend ACCELERATE_COST tokens to set a fresh 10-minute
+  // fuse on the current round and take the lead (see "Accelerate" in CLAUDE.md).
+  // Behaves exactly like a speed-up but with a tighter fuse and higher cost.
+  const ACCELERATE_COST = 1000;
+  const ACCELERATE_DURATION_MS = 600000; // 10 min
+  const MOCK_ACCELERATE_DURATION_MS = 20000; // 20s — shorter than the 30s mock speed-up
+
   // Win streak bonuses: a player who wins consecutive rounds earns an
   // operator-funded bonus on top of the full pot (see "Win Streak Bonuses").
   // The bonus is drawn from the app wallet's own surplus, sent as a separate
@@ -90,6 +97,10 @@ function createLastOneWins(opts) {
 
   function getSpeedupDuration() {
     return localDev ? MOCK_SPEEDUP_DURATION_MS : SPEEDUP_DURATION_MS;
+  }
+
+  function getAccelerateDuration() {
+    return localDev ? MOCK_ACCELERATE_DURATION_MS : ACCELERATE_DURATION_MS;
   }
 
   function getTimeRemaining() {
@@ -146,6 +157,8 @@ function createLastOneWins(opts) {
       timerExpired: state.timerExpiresAt != null && Date.now() >= state.timerExpiresAt,
       speedupCost: SPEEDUP_COST,
       speedupDurationMs: getSpeedupDuration(),
+      accelerateCost: ACCELERATE_COST,
+      accelerateDurationMs: getAccelerateDuration(),
       streakBonusMin: STREAK_BONUS_MIN,
       streakBonusPct: STREAK_BONUS_PCT,
       streakBonusMaxPct: STREAK_BONUS_MAX_PCT,
@@ -228,6 +241,21 @@ function createLastOneWins(opts) {
       }
       state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isSpeedup ? "speedup" : "entry" });
       console.log(`[game] ${isSpeedup ? "speedup" : "entry(speedup-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
+    } else if (memo.type === "accelerate" && tx.to === appPubkey) {
+      const amount = tx.amount || 0;
+      if (amount <= 0) return;
+      state.potBalance += amount;
+      // A valid accelerate (>= ACCELERATE_COST) sets a fresh 10-min fuse and
+      // takes the lead, exactly like a speed-up. An underfunded accelerate memo
+      // falls back to a base-duration entry so the tokens are never dropped.
+      const isAccelerate = amount >= ACCELERATE_COST;
+      if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        state.lastSender = tx.from;
+        state.lastEntryTs = tx.ts;
+        state.timerExpiresAt = tx.ts + (isAccelerate ? getAccelerateDuration() : getTimerDuration());
+      }
+      state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isAccelerate ? "accelerate" : "entry" });
+      console.log(`[game] ${isAccelerate ? "accelerate" : "entry(accelerate-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
     } else if (memo.type === "payout" && tx.from === appPubkey) {
       const round = memo.round || state.roundNumber;
       const winner = memo.winner || tx.to;

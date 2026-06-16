@@ -89,15 +89,11 @@ const game = createLastOneWins({
 // sender pollers, backfill, mock drain) is in gameCache below.
 game.start();
 
-// ── Demo seed (staging + local-dev only) ─────────────────────────────────────
-// The new participant-count / winner-history / odds / animation features all
-// render against game state that starts empty. Staging containers run in
-// production mode against a possibly-quiet pot, so seed a few past rounds and
-// a populated current round so a tester sees non-empty sections immediately.
-// Strictly a no-op in production: gated on IS_STAGING || LOCAL_DEV. In
-// local-dev the synthetic txs go through the mock store's drain loop; in
-// staging they're fed directly to the game state machine. Real on-chain txs
-// (if any) still flow in through gameCache and take precedence by round number.
+// ── Staging / local-dev demo seed ────────────────────────────────────────────
+// Seeds obviously-fake demo transactions so the full UI surface is testable
+// without live on-chain activity. Covers: participant-count, winner-history,
+// odds, animation, streak bonuses, and accelerate rows. Strictly a no-op in
+// production. Seeding is idempotent: processTransaction dedups by tx id.
 function buildDemoSeed(potPubkey) {
   const A = "ut1_demo_alice_0000000000000000aaaaaa";
   const B = "ut1_demo_bob_00000000000000000000bbbbbb";
@@ -116,6 +112,10 @@ function buildDemoSeed(potPubkey) {
   const entry = (from, amount, ms) => txs.push({
     id: id("entry"), from_pubkey: from, destination_pubkey: potPubkey, amount,
     memo: JSON.stringify({ app: APP, type: "entry" }), created_at: iso(ms),
+  });
+  const accelerate = (from, ms) => txs.push({
+    id: id("accel"), from_pubkey: from, destination_pubkey: potPubkey, amount: 1000,
+    memo: JSON.stringify({ app: APP, type: "accelerate" }), created_at: iso(ms),
   });
   const payout = (winner, amount, round, ms) => txs.push({
     id: id("payout"), from_pubkey: potPubkey, destination_pubkey: winner, amount,
@@ -149,27 +149,25 @@ function buildDemoSeed(potPubkey) {
   payout(A, 100, 3, now - 1 * H + 120000);
   bonus(A, 10, 3, 2, now - 1 * H + 121000);
 
-  // Round 4 — current, live. alice leads. 3 participants, 6 entries.
+  // Round 4 — current, live. alice leads via accelerate. 3 participants.
   entry(A, 50, now - 300000);
   entry(B, 30, now - 240000);
   entry(C, 40, now - 180000);
   entry(A, 20, now - 120000);
   entry(B, 15, now - 60000);
-  entry(A, 10, now - 5000);
+  entry(A, 10, now - 10000);
+  accelerate(A, now - 5000);
 
   return txs;
 }
 
 if (IS_STAGING || LOCAL_DEV) {
   const seed = buildDemoSeed(APP_PUBKEY);
-  if (LOCAL_DEV && mockApi.transactions) {
-    // Drained through the mock-mode loop in gameCache, exercising the live path.
-    for (const tx of seed) mockApi.transactions.push(tx);
-  } else {
-    // Staging: feed the state machine directly (chain pollers stay empty).
-    for (const tx of seed) game.processTransaction(tx);
+  for (const tx of seed) {
+    if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
+    game.processTransaction(tx);
   }
-  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"})`);
+  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"}) — incl. streak bonus and accelerate rows`);
 }
 
 const gameCache = createAppStateCache({
