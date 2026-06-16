@@ -54,6 +54,14 @@ function createLastOneWins(opts) {
   const SPEEDUP_DURATION_MS = 1800000; // 30 min
   const MOCK_SPEEDUP_DURATION_MS = 30000; // 30s — shorter than the 2-min mock base
 
+  // Win streak bonuses: a player who wins consecutive rounds earns an
+  // operator-funded bonus on top of the full pot (see "Win Streak Bonuses").
+  // The bonus is drawn from the app wallet's own surplus, sent as a separate
+  // best-effort tx after the main payout, and never blocks or reduces it.
+  const STREAK_BONUS_MIN = 2;        // min consecutive wins to earn a bonus
+  const STREAK_BONUS_PCT = 0.10;     // bonus fraction of pot per level beyond 1
+  const STREAK_BONUS_MAX_PCT = 0.50; // cap on the bonus fraction
+
   // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
   const TIMER_CHANGE_TS = Date.now();
 
@@ -66,6 +74,9 @@ function createLastOneWins(opts) {
     entries: [],
     pastRounds: [],
     payoutInProgress: false,
+    // Win streaks (derived from the ordered payout sequence, not persisted).
+    streaks: new Map(),   // pubkey → { count, lastWonRound }
+    currentStreak: null,  // { winner, count, lastRound } or null before any payout
   };
 
   // pubkey → { name, ts } — latest set_username per sender wins
@@ -92,6 +103,31 @@ function createLastOneWins(opts) {
     return entry ? entry.name : null;
   }
 
+  // Bonus tokens for a given pot/streak. Returns whole tokens; 0 below the
+  // minimum streak or when the rounded amount is dust.
+  function computeStreakBonus(potAmount, streakCount) {
+    if (streakCount < STREAK_BONUS_MIN) return 0;
+    const pct = Math.min(STREAK_BONUS_MAX_PCT, (streakCount - 1) * STREAK_BONUS_PCT);
+    return Math.round((potAmount || 0) * pct);
+  }
+
+  // Derive the winner's streak from the ordered payout sequence. A win counts
+  // as consecutive only when it is the immediately following round number for
+  // the same winner — robust to out-of-order delivery, matches round advance.
+  // Returns the post-win streak count.
+  function applyStreak(winner, round) {
+    let count;
+    if (state.currentStreak && state.currentStreak.winner === winner &&
+        round === state.currentStreak.lastRound + 1) {
+      count = state.currentStreak.count + 1;
+    } else {
+      count = 1;
+    }
+    state.streaks.set(winner, { count, lastWonRound: round });
+    state.currentStreak = { winner, count, lastRound: round };
+    return count;
+  }
+
   function getStateResponse() {
     const usernameMap = {};
     for (const [addr, v] of usernames) usernameMap[addr] = v.name;
@@ -106,6 +142,14 @@ function createLastOneWins(opts) {
       timerExpired: state.timerExpiresAt != null && Date.now() >= state.timerExpiresAt,
       speedupCost: SPEEDUP_COST,
       speedupDurationMs: getSpeedupDuration(),
+      streakBonusMin: STREAK_BONUS_MIN,
+      streakBonusPct: STREAK_BONUS_PCT,
+      streakBonusMaxPct: STREAK_BONUS_MAX_PCT,
+      currentStreak: state.currentStreak ? {
+        winner: state.currentStreak.winner,
+        winnerName: resolveUsername(state.currentStreak.winner),
+        count: state.currentStreak.count,
+      } : null,
       entries: state.entries.slice(-50).reverse(),
       pastRounds: state.pastRounds.slice(-20).reverse(),
       payoutInProgress: state.payoutInProgress,
@@ -182,15 +226,19 @@ function createLastOneWins(opts) {
       console.log(`[game] ${isSpeedup ? "speedup" : "entry(speedup-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
     } else if (memo.type === "payout" && tx.from === appPubkey) {
       const round = memo.round || state.roundNumber;
+      const winner = memo.winner || tx.to;
       state.pastRounds.push({
         round,
-        winner: memo.winner || tx.to,
+        winner,
         amount: tx.amount || 0,
         payoutTs: tx.ts,
         payoutTxId: tx.id,
         entries: state.entries.slice(-50),
       });
       if (round >= state.roundNumber) {
+        // Update the streak before advancing — guarded by the same check so
+        // replayed/duplicate payouts don't double-count (seenTxIds also dedups).
+        applyStreak(winner, round);
         state.roundNumber = round + 1;
         state.potBalance = 0;
         state.lastSender = null;
@@ -199,6 +247,18 @@ function createLastOneWins(opts) {
         state.entries = [];
       }
       console.log(`[game] payout detected: round ${round}, advancing to round ${state.roundNumber}`);
+    } else if (memo.type === "bonus" && tx.from === appPubkey) {
+      // Streak bonus: record onto the matching past round so history can show
+      // "+bonus". Does NOT advance the round or touch pot/timer — only payout does.
+      const round = memo.round != null ? memo.round : null;
+      const bonusInfo = { amount: tx.amount || 0, streak: memo.streak || 0 };
+      for (let i = state.pastRounds.length - 1; i >= 0; i--) {
+        if (state.pastRounds[i].round === round) {
+          state.pastRounds[i].bonus = bonusInfo;
+          break;
+        }
+      }
+      console.log(`[game] streak bonus detected: round ${round}, +${bonusInfo.amount} (streak ${bonusInfo.streak})`);
     }
   }
 
@@ -266,6 +326,53 @@ function createLastOneWins(opts) {
     }
   }
 
+  // Best-effort streak bonus send. Drawn from the app wallet's own surplus,
+  // not the pot. Tolerates ConsumedUtxo / single-input failures the same way
+  // payouts do (parallel deploys race) — log and skip, never retry/consolidate.
+  async function sendBonus(toPkHash, amount, round, streak) {
+    const memo = Buffer.from(JSON.stringify({ app: APP_ID, type: "bonus", round, winner: toPkHash, streak, amount })).toString("base64url");
+    try {
+      const resp = await httpJson("POST", `${nodeRpcUrl}/wallet/send`, {
+        from_pk_hash: appPubkey, amount, to_pk_hash: toPkHash, fee: 0, memo,
+      });
+      if (resp && resp.queued) {
+        console.log(`[payout] streak bonus ${amount} to ${toPkHash.slice(0, 16)}… (round ${round}, streak ${streak})`);
+        return true;
+      }
+      console.warn("[payout] bonus send failed (treating as unfunded):", resp);
+      return false;
+    } catch (e) {
+      console.warn("[payout] bonus send error (treating as unfunded):", e.message);
+      return false;
+    }
+  }
+
+  // After a confirmed payout, attempt the operator-funded streak bonus. Fully
+  // best-effort: any failure degrades to badge-only recognition in the UI.
+  async function maybeSendStreakBonus(winner, round, potAmount) {
+    try {
+      const entry = state.streaks.get(winner);
+      const streakCount = entry ? entry.count : 0;
+      if (streakCount < STREAK_BONUS_MIN) return;
+      const bonus = computeStreakBonus(potAmount, streakCount);
+      if (bonus <= 0) return; // skip dust / zero-amount sends
+      const sent = await sendBonus(winner, bonus, round, streakCount);
+      if (!sent) return;
+      // Inject a synthetic bonus tx so history reflects it immediately.
+      const syntheticBonus = {
+        from_pubkey: appPubkey,
+        destination_pubkey: winner,
+        amount: bonus,
+        memo: JSON.stringify({ app: APP_ID, type: "bonus", round, winner, streak: streakCount, amount: bonus }),
+        created_at: new Date().toISOString(),
+        id: `bonus_${round}_${Date.now()}`,
+      };
+      processTransaction(syntheticBonus);
+    } catch (e) {
+      console.warn("[payout] streak bonus error:", e.message);
+    }
+  }
+
   async function consolidateUtxos() {
     try {
       await httpJson("POST", `${nodeRpcUrl}/wallet/send`, {
@@ -313,6 +420,23 @@ function createLastOneWins(opts) {
       mockTransactions.push(payoutTx);
       processTransaction(payoutTx);
       console.log(`[payout] mock payout injected for round ${round}`);
+      // Mock streak bonus so the streak/bonus cycle is observable in --local-dev.
+      const entry = state.streaks.get(winner);
+      const streakCount = entry ? entry.count : 0;
+      const bonus = computeStreakBonus(amount, streakCount);
+      if (streakCount >= STREAK_BONUS_MIN && bonus > 0) {
+        const bonusTx = {
+          id: crypto.randomUUID(),
+          from_pubkey: appPubkey,
+          destination_pubkey: winner,
+          amount: bonus,
+          memo: JSON.stringify({ app: APP_ID, type: "bonus", round, winner, streak: streakCount, amount: bonus }),
+          created_at: new Date().toISOString(),
+        };
+        mockTransactions.push(bonusTx);
+        processTransaction(bonusTx);
+        console.log(`[payout] mock streak bonus injected: round ${round}, +${bonus} (streak ${streakCount})`);
+      }
       state.payoutInProgress = false;
       return;
     }
@@ -339,6 +463,9 @@ function createLastOneWins(opts) {
           id: `payout_${round}_${Date.now()}`,
         };
         processTransaction(syntheticTx);
+        // Streak bonus is best-effort and runs after the round has advanced;
+        // it never blocks or reduces the main payout above.
+        await maybeSendStreakBonus(winner, round, amount);
       } else {
         console.error(`[payout] failed to send payout for round ${round}`);
       }
@@ -385,6 +512,8 @@ function createLastOneWins(opts) {
     state.entries = [];
     state.pastRounds = [];
     state.payoutInProgress = false;
+    state.streaks.clear();
+    state.currentStreak = null;
     signerConfigured = false;
     console.log("[game] state reset (chain restart detected)");
   }

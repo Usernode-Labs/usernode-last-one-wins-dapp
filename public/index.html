@@ -680,6 +680,15 @@
       background: var(--gold-dim);
     }
 
+    /* ── Streak banner ──────────────────────────────────────── */
+    .streak-banner {
+      font-size: var(--text-sm);
+      font-weight: 700;
+      color: var(--gold);
+      text-align: center;
+      margin-top: var(--space-2);
+    }
+
     /* ── Username bottom sheet ──────────────────────────────── */
     .bottomSheet-backdrop {
       position: fixed;
@@ -796,6 +805,7 @@
         <button class="header-pill" id="usernamePill" type="button" title="Change username">
           <span id="usernameDisplay">...</span>
         </button>
+        <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
@@ -830,10 +840,19 @@
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
         <li><span class="info-speedup-badge">⚡ Speed Up</span> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
+        <li>&#128293; <strong>Win Streaks:</strong> <span id="streakInfoText">win consecutive rounds for a bonus on top of the pot &mdash; the longer the streak, the bigger the reward</span></li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
       <p><em>Timing is everything. Enter too early and risk getting replaced. Enter too late and miss your chance.</em></p>
       <p class="muted">All game state lives on the Usernode blockchain. The server tracks the timer and sends automated payouts. Tap anywhere outside this panel to close.</p>
+    </div>
+  </div>
+
+  <!-- Pot breakdown overlay -->
+  <div class="info-overlay" id="potOverlay">
+    <div class="info-content" id="potContent">
+      <h2>Pot Breakdown</h2>
+      <div id="potBreakdownBody"></div>
     </div>
   </div>
 
@@ -852,6 +871,7 @@
         <div class="personal-status-wrap">
           <div class="personal-status" id="personalStatus"></div>
         </div>
+        <div class="streak-banner hide" id="streakBanner"></div>
       </div>
 
       <!-- Recent activity -->
@@ -899,6 +919,7 @@
   (function () {
     /* ── Config ─────────────────────────────────────────────── */
     const GAME_POLL_MS = 4000;
+    const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // < 5 min remaining → red-alert flash
     const TX_SEND_OPTS = { timeoutMs: 180000, pollIntervalMs: 1500 };
     const EXPLORER_BASE = window.location.origin + "/explorer-api";
 
@@ -908,6 +929,8 @@
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
     const personalStatusEl = document.getElementById("personalStatus");
+    const streakBanner = document.getElementById("streakBanner");
+    const streakInfoText = document.getElementById("streakInfoText");
     const mechanicLabelEl = document.getElementById("mechanicLabel");
     const activityTitle = document.getElementById("activityTitle");
     const amountInput = document.getElementById("amountInput");
@@ -928,6 +951,10 @@
     const saveUsernameBtn = document.getElementById("saveUsernameBtn");
     const cancelUsernameBtn = document.getElementById("cancelUsernameBtn");
     const usernameTxProgress = document.getElementById("usernameTxProgress");
+    const potToggle = document.getElementById("potToggle");
+    const potOverlay = document.getElementById("potOverlay");
+    const potContent = document.getElementById("potContent");
+    const potBreakdownBody = document.getElementById("potBreakdownBody");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -946,6 +973,17 @@
       return s.slice(0, h) + "..." + s.slice(-h);
     }
 
+    // Secondary monospaced line showing the player's on-chain address.
+    // Returns null when `addr` is falsy so callers can skip appending it.
+    function addrLine(addr, isSelf) {
+      if (!addr) return null;
+      const el = document.createElement("div");
+      el.className = "entry-addr" + (isSelf ? " self" : "");
+      el.textContent = truncate(addr, 16);
+      el.title = addr;
+      return el;
+    }
+
     function formatCountdown(ms) {
       if (ms <= 0) return "00:00:00";
       const totalSec = Math.floor(ms / 1000);
@@ -958,10 +996,43 @@
       return `${pad(h)}:${pad(m)}:${pad(s)}`;
     }
 
+    // Render the live countdown text and toggle the red-alert urgency
+    // state purely from the remaining time (client-side only).
+    function renderCountdown(ms) {
+      countdownEl.textContent = formatCountdown(ms);
+      const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
+      countdownEl.className = urgent ? "countdown urgent" : "countdown";
+    }
+
     function speedupLabel() {
       const ms = (gameData && gameData.speedupDurationMs) || 1800000;
       const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
       return "⚡ sped up — " + txt;
+    }
+
+    // The streak the current leader would reach if they win this round. The
+    // server's currentStreak reflects the PREVIOUS round's winner, so a win by
+    // the same player extends it, anyone else starts at 1.
+    function predictWinnerStreak() {
+      if (!gameData || !gameData.lastSender) return 1;
+      const cs = gameData.currentStreak;
+      if (cs && cs.winner === gameData.lastSender) return cs.count + 1;
+      return 1;
+    }
+
+    // "You won!" / "X won!" message, augmented with a streak/bonus hint when
+    // the win reaches the bonus threshold. Used by both expired-state render
+    // paths so they stay in sync.
+    function wonMessage(winnerAddr, isSelf) {
+      const streak = predictWinnerStreak();
+      const min = (gameData && gameData.streakBonusMin) || 2;
+      if (isSelf) {
+        return streak >= min
+          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!"
+          : "You won! Payout incoming...";
+      }
+      const note = streak >= min ? " 🔥 " + streak + "-win streak!" : "";
+      return displayName(winnerAddr) + " won this round!" + note;
     }
 
     function formatTime(ms) {
@@ -973,6 +1044,51 @@
 
     function showError(msg) {
       errorMsg.textContent = msg || "";
+    }
+
+    // Pull a human-readable string out of whatever sendTransaction rejected
+    // with — Error, string, or a plain object carrying message/code/reason.
+    function errorText(err) {
+      if (err == null) return "";
+      if (typeof err === "string") return err;
+      const parts = [];
+      if (err.message) parts.push(String(err.message));
+      if (err.reason && err.reason !== err.message) parts.push(String(err.reason));
+      if (err.code != null) parts.push("code " + String(err.code));
+      if (parts.length) return parts.join(" — ");
+      try { return JSON.stringify(err); } catch (_) { return String(err); }
+    }
+
+    // Classify a sendTransaction rejection. Returns a player-facing message.
+    // The single-input / insufficient-UTXO class is special-cased with an
+    // actionable hint (the chain's wallet RPC can't yet combine many small
+    // UTXOs into one payment — see the speed-up spec); everything else falls
+    // back to the caller's generic prefix so the raw text is still shown.
+    function describeSendError(err, genericPrefix, amount) {
+      const raw = errorText(err);
+      const hay = raw.toLowerCase();
+      const utxoClass =
+        hay.indexOf("single input") >= 0 ||
+        hay.indexOf("single-input") >= 0 ||
+        hay.indexOf("no suitable utxo") >= 0 ||
+        hay.indexOf("suitable utxo") >= 0 ||
+        hay.indexOf("insufficient") >= 0 ||
+        hay.indexOf("consumedutxo") >= 0 ||
+        hay.indexOf("consumed utxo") >= 0 ||
+        // Confirmed wording from the real-chain rejection (see speed-up spec).
+        hay.indexOf("requires a single base-currency utxo") >= 0 ||
+        hay.indexOf("single-input spend/transfer") >= 0 ||
+        hay.indexOf("single-input spend") >= 0 ||
+        hay.indexOf("transfer_funds flow") >= 0 ||
+        hay.indexOf("merge utxos first") >= 0;
+      if (utxoClass) {
+        const amt = amount ? String(amount) + "-token" : "single";
+        return "Your tokens are split into small amounts, so the chain can't" +
+          " combine them into one " + amt + " payment yet. Consolidate your" +
+          " wallet (send yourself a single payment of that size or more), then" +
+          " try again.";
+      }
+      return genericPrefix + (raw || String(err));
     }
 
     /* ── Username helpers ────────────────────────────────────── */
@@ -1124,19 +1240,12 @@
         countdownLabel.textContent = gameData.payoutInProgress ? "Payout in progress..." : "Payout imminent!";
         mechanicLabelEl.textContent = "";
         sendBtn.textContent = "Enter Now";
-        if (isLeading) {
-          personalStatusEl.textContent = "🏆 You won! Payout incoming...";
-          personalStatusEl.className = "personal-status won";
-        } else {
-          personalStatusEl.textContent = "🏆 " + displayName(gameData.lastSender) + " won this round!";
-          personalStatusEl.className = "personal-status won";
-        }
+        personalStatusEl.textContent = wonMessage(gameData.lastSender, isLeading);
+        personalStatusEl.className = "personal-status won";
       } else {
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
-        const urgent = gameData.timeRemainingMs != null && gameData.timeRemainingMs <= 60000;
-        countdownEl.className = "countdown" + (urgent ? " urgent" : "");
-        countdownLabel.textContent = "until pot is claimed";
-        mechanicLabelEl.textContent = "Each entry resets the timer — last one wins";
+        renderCountdown(gameData.timeRemainingMs);
+        countdownLabel.textContent = "Until pot is claimed";
+        mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
         if (isLeading) {
           personalStatusEl.textContent = "✓ You’re the last entry — hold until time runs out to win!";
           personalStatusEl.className = "personal-status leading";
@@ -1153,6 +1262,34 @@
       activityTitle.textContent = totalItems > 0
         ? "Recent Activity · " + totalItems
         : "Recent Activity";
+
+      // Active win-streak banner. currentStreak holds the most recent round's
+      // winner and their consecutive-win count. Hidden during the expired/won
+      // state (the won message already carries the streak hint).
+      const cs = gameData.currentStreak;
+      if (cs && cs.count >= 2 && !gameData.timerExpired) {
+        const isMine = myAddress && cs.winner === myAddress;
+        const leadingStreak = gameData.lastSender === cs.winner;
+        if (isMine && leadingStreak) {
+          streakBanner.textContent = "🔥 You're on a " + cs.count + "-win streak — hold to extend it!";
+        } else if (isMine) {
+          streakBanner.textContent = "🔥 You're on a " + cs.count + "-win streak — win this round to extend it!";
+        } else {
+          streakBanner.textContent = "🔥 " + displayName(cs.winner) + " is on a " + cs.count + "-win streak";
+        }
+        streakBanner.classList.remove("hide");
+      } else {
+        streakBanner.textContent = "";
+        streakBanner.classList.add("hide");
+      }
+
+      // Keep the info-overlay copy in sync with server-configured thresholds.
+      if (streakInfoText && gameData.streakBonusMin != null && gameData.streakBonusPct != null) {
+        const pct = Math.round(gameData.streakBonusPct * 100);
+        streakInfoText.textContent = "win " + gameData.streakBonusMin +
+          "+ rounds in a row for a token bonus on top of the pot (" + pct +
+          "% per extra win) — the longer the streak, the bigger the reward";
+      }
 
       entryList.innerHTML = "";
       const items = [];
@@ -1179,7 +1316,7 @@
         items.push({ type: "entry", from: e.from, amount: e.amount, ts: e.ts, txId: e.txId });
       }
       for (const r of (gameData.pastRounds || [])) {
-        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round, entries: r.entries || [] });
+        items.push({ type: "payout", from: r.winner, amount: r.amount, ts: r.payoutTs, round: r.round, entries: r.entries || [], bonus: r.bonus || null });
       }
       items.sort((a, b) => b.ts - a.ts);
 
@@ -1249,6 +1386,8 @@
                 rt.className = "entry-time";
                 rt.textContent = formatTime(e.ts);
                 rl.appendChild(rf);
+                const reAddr = addrLine(e.from, eSelf);
+                if (reAddr) rl.appendChild(reAddr);
                 rl.appendChild(rt);
                 const ra = document.createElement("div");
                 ra.className = "entry-amount";
@@ -1283,7 +1422,17 @@
         timeEl.className = "entry-time";
         timeEl.textContent = formatTime(item.ts);
         left.appendChild(fromEl);
+        const addrEl = addrLine(item.from, isSelf);
+        if (addrEl) left.appendChild(addrEl);
         left.appendChild(timeEl);
+        if (item.type === "payout" && item.bonus && item.bonus.amount > 0) {
+          const bonusEl = document.createElement("div");
+          bonusEl.className = "entry-time";
+          bonusEl.style.color = "var(--gold)";
+          bonusEl.style.fontWeight = "600";
+          bonusEl.textContent = "🔥 " + item.bonus.streak + "-win streak bonus +" + item.bonus.amount;
+          left.appendChild(bonusEl);
+        }
 
         const amtEl = document.createElement("div");
         amtEl.className = "entry-amount";
@@ -1298,31 +1447,138 @@
       }
     }
 
+    /* ── Pot breakdown overlay render ───────────────────────── */
+    function pbContribRow(label, count, amount, gold) {
+      const row = document.createElement("div");
+      row.className = "entry-item";
+      const left = document.createElement("div");
+      const f = document.createElement("div");
+      f.className = "entry-from";
+      f.textContent = label + (count != null ? " · " + count + "×" : "");
+      left.appendChild(f);
+      const a = document.createElement("div");
+      a.className = "entry-amount";
+      if (gold) a.style.color = "var(--gold)";
+      a.textContent = String(amount);
+      row.appendChild(left);
+      row.appendChild(a);
+      return row;
+    }
+
+    function renderPotBreakdown() {
+      if (!potBreakdownBody) return;
+      potBreakdownBody.innerHTML = "";
+
+      const pot = gameData ? (gameData.potBalance || 0) : 0;
+      const entries = (gameData && gameData.entries) || [];
+      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0;
+      for (const e of entries) {
+        const amt = Number(e.amount) || 0;
+        if (e.kind === "speedup") { speedupsSum += amt; speedupsCount++; }
+        else { entriesSum += amt; entriesCount++; }
+      }
+      const recentSum = entriesSum + speedupsSum;
+      const earlier = Math.max(0, pot - recentSum);
+      const cost = (gameData && gameData.speedupCost) || 100;
+      const leader = gameData && gameData.lastSender;
+      const potEmpty = !leader || pot <= 0;
+
+      // Pot total
+      const potWrap = document.createElement("div");
+      potWrap.style.textAlign = "center";
+      potWrap.style.marginBottom = "14px";
+      const potVal = document.createElement("div");
+      potVal.className = "pot";
+      potVal.style.margin = "0";
+      potVal.textContent = String(pot);
+      const potLbl = document.createElement("div");
+      potLbl.className = "pot-label";
+      potLbl.textContent = "tokens in the pot";
+      potWrap.appendChild(potVal);
+      potWrap.appendChild(potLbl);
+      potBreakdownBody.appendChild(potWrap);
+
+      // Distribution summary (static — winner takes all)
+      const dist = document.createElement("div");
+      dist.innerHTML =
+        '<p style="margin:0 0 6px;font-weight:600;">Winner takes all</p>' +
+        '<ul style="margin:0 0 12px;padding-left:18px;">' +
+        '<li><strong>100%</strong> of the pot goes to the winner</li>' +
+        '<li><strong>0</strong> fees</li>' +
+        '<li>Nothing is kept by the house</li>' +
+        '<li>No rollover — the pot resets to 0 each round</li>' +
+        '</ul>';
+      potBreakdownBody.appendChild(dist);
+
+      if (potEmpty) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "The pot is empty — be the first to enter!";
+        potBreakdownBody.appendChild(empty);
+      } else {
+        // Contribution breakdown (recent activity; reconciles to pot total)
+        const title = document.createElement("div");
+        title.className = "section-title";
+        title.textContent = "Recent contributions";
+        potBreakdownBody.appendChild(title);
+
+        const list = document.createElement("div");
+        list.className = "entry-list";
+        list.appendChild(pbContribRow("Entries", entriesCount, entriesSum, false));
+        list.appendChild(pbContribRow("⚡ Speed-ups", speedupsCount, speedupsSum, true));
+        if (earlier > 0) list.appendChild(pbContribRow("Earlier contributions", null, earlier, false));
+        potBreakdownBody.appendChild(list);
+
+        if (earlier > 0) {
+          const recNote = document.createElement("p");
+          recNote.className = "muted";
+          recNote.style.marginTop = "8px";
+          recNote.textContent = "Split reflects recent activity; the pot total above is authoritative.";
+          potBreakdownBody.appendChild(recNote);
+        }
+
+        // Current leader / would-be winner
+        const leaderLine = document.createElement("div");
+        leaderLine.className = "personal-status";
+        leaderLine.style.marginTop = "14px";
+        const isSelf = myAddress && leader === myAddress;
+        if (gameData.timerExpired || gameData.payoutInProgress) {
+          leaderLine.classList.add("won");
+          leaderLine.textContent = (isSelf ? "You" : displayName(leader)) + " won this round — full pot paid out";
+        } else {
+          leaderLine.classList.add(isSelf ? "leading" : "trailing");
+          leaderLine.textContent = isSelf
+            ? "If the timer runs out now, you win " + pot + " tokens"
+            : "If the timer runs out now, " + displayName(leader) + " wins " + pot + " tokens";
+        }
+        potBreakdownBody.appendChild(leaderLine);
+      }
+
+      // Speed-up note (always)
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.style.marginTop = "12px";
+      note.textContent = "⚡ A speed-up sends " + cost + "+ tokens — the full amount joins the pot. It buys a faster clock, not a discount or a fee.";
+      potBreakdownBody.appendChild(note);
+    }
+
     /* ── Countdown tick (1s local updates between polls) ───── */
     setInterval(() => {
       if (!gameData || !gameData.lastSender || gameData.timerExpired) return;
       if (gameData.timeRemainingMs != null && gameData.timeRemainingMs > 0) {
         gameData.timeRemainingMs = Math.max(0, gameData.timeRemainingMs - 1000);
         if (gameData.timeRemainingMs <= 0) gameData.timerExpired = true;
-        countdownEl.textContent = formatCountdown(gameData.timeRemainingMs);
-        // Urgency pulse under 60s
-        if (gameData.timeRemainingMs <= 60000 && !gameData.timerExpired) {
-          countdownEl.classList.add("urgent");
-        } else {
-          countdownEl.classList.remove("urgent");
-        }
+        renderCountdown(gameData.timeRemainingMs);
         if (gameData.timerExpired) {
           countdownEl.textContent = "TIMER EXPIRED";
           countdownEl.className = "countdown expired";
           countdownLabel.textContent = "Payout imminent!";
           mechanicLabelEl.textContent = "";
-          if (myAddress && gameData.lastSender === myAddress) {
-            personalStatusEl.textContent = "🏆 You won! Payout incoming...";
-            personalStatusEl.className = "personal-status won";
-          } else {
-            personalStatusEl.textContent = "🏆 " + displayName(gameData.lastSender) + " won this round!";
-            personalStatusEl.className = "personal-status won";
-          }
+          const isSelfWin = myAddress && gameData.lastSender === myAddress;
+          personalStatusEl.textContent = wonMessage(gameData.lastSender, isSelfWin);
+          personalStatusEl.className = "personal-status won";
+          streakBanner.textContent = "";
+          streakBanner.classList.add("hide");
         }
       }
     }, 1000);
@@ -1343,6 +1599,7 @@
           window.usernode.serverCacheUrl = "/__usernode/cache/" + appPubkey;
         }
         render();
+        if (potOverlay && potOverlay.classList.contains("open")) renderPotBreakdown();
         statusDot.className = "status-dot ok";
         statusText.textContent = "connected";
       } catch (e) {
@@ -1390,7 +1647,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Send failed: " + (e.message || e));
+        console.error("[lastwin] entry sendTransaction failed", e);
+        showError(describeSendError(e, "Send failed: ", amount));
       }
     });
 
@@ -1424,7 +1682,8 @@
         }
       } catch (e) {
         setSending(false, false);
-        showError("Speed-up failed: " + (e.message || e));
+        console.error("[lastwin] speed-up sendTransaction failed", e);
+        showError(describeSendError(e, "Speed-up failed: ", cost));
       }
     });
 
@@ -1541,11 +1800,26 @@
       const infoToggle = document.getElementById("infoToggle");
       const infoOverlay = document.getElementById("infoOverlay");
       const infoContent = document.getElementById("infoContent");
+
+      // Overlays are mutually exclusive — opening one closes the others.
+      function closeOverlays() {
+        if (infoOverlay) infoOverlay.classList.remove("open");
+        if (potOverlay) potOverlay.classList.remove("open");
+      }
+
       if (infoToggle && infoOverlay) {
-        infoToggle.addEventListener("click", () => infoOverlay.classList.add("open"));
+        infoToggle.addEventListener("click", () => { closeOverlays(); infoOverlay.classList.add("open"); });
         infoOverlay.addEventListener("click", (e) => {
           if (!infoContent.contains(e.target)) {
             infoOverlay.classList.remove("open");
+          }
+        });
+      }
+      if (potToggle && potOverlay) {
+        potToggle.addEventListener("click", () => { closeOverlays(); renderPotBreakdown(); potOverlay.classList.add("open"); });
+        potOverlay.addEventListener("click", (e) => {
+          if (!potContent.contains(e.target)) {
+            potOverlay.classList.remove("open");
           }
         });
       }

@@ -83,6 +83,9 @@ Memos are JSON. Last One Wins only acts on these:
   tokens — see "Speed-up action" below)
 - `user → game (username)`: `{"app":"lastwin","type":"set_username","username":"<name>"}`
 - `game → winner (payout)`: `{"app":"lastwin","type":"payout","round":<n>,"winner":"<addr>"}`
+- `game → winner (streak bonus)`: `{"app":"lastwin","type":"bonus","round":<n>,"winner":"<addr>","streak":<count>,"amount":<tokens>}`
+  (operator-funded bonus for consecutive-round wins — see "Win streak
+  bonuses" below).
 - `game → game (consolidate)`: `{"app":"lastwin","type":"consolidate"}` (UTXO
   consolidation self-send when a single-UTXO payout fails — see "UTXO
   consolidation" below).
@@ -140,6 +143,26 @@ sidecar usernode build that exposes those endpoints.
   dropped. In `--local-dev`, the speed-up fuse is shortened to 30s
   (`MOCK_SPEEDUP_DURATION_MS`) so it stays shorter than the 2-min mock base.
   `/__game/state` exposes `speedupCost` and `speedupDurationMs` for the UI.
+- Win streak bonuses: a player who wins consecutive rounds earns an
+  operator-funded bonus on top of the full pot. Streaks are **derived,
+  not persisted** — `applyStreak()` recomputes `state.streaks` (pubkey →
+  `{ count, lastWonRound }`) and `state.currentStreak` from the ordered
+  `payout` sequence inside `processTransaction`, guarded by the same
+  `round >= state.roundNumber` check so replayed/duplicate payouts don't
+  double-count. A win is "consecutive" only when its round number is
+  `currentStreak.lastRound + 1` for the same winner; anything else resets
+  the count to 1. After a confirmed payout, `maybeSendStreakBonus()` sends
+  a separate best-effort `/wallet/send` (`type:"bonus"`) for
+  `round(pot * min(STREAK_BONUS_MAX_PCT, (count-1) * STREAK_BONUS_PCT))`
+  tokens (`STREAK_BONUS_MIN`=2, `STREAK_BONUS_PCT`=0.10,
+  `STREAK_BONUS_MAX_PCT`=0.50). The bonus is drawn from the app wallet's
+  own surplus, never blocks or reduces the main payout, and treats any RPC
+  failure as "unfunded" (UI degrades to a badge with no `+bonus` line).
+  The `bonus` tx is recorded onto the matching `pastRounds` entry but does
+  not advance the round or touch the pot/timer. `--local-dev` injects a
+  mock bonus tx so the cycle is observable. `/__game/state` exposes
+  `currentStreak`, `streakBonusMin`, `streakBonusPct`, and
+  `streakBonusMaxPct` for the UI.
 
 ## Parallel deploys + same APP_PUBKEY
 
