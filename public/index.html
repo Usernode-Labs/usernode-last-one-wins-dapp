@@ -912,6 +912,9 @@
       <div style="margin-top:6px;">
         <button class="btn-speedup" id="speedupBtn" title="Available once a round is live">⚡ Speed Up (100)</button>
       </div>
+      <div style="margin-top:6px;">
+        <button class="btn-speedup" id="accelerateBtn" style="border-color:#e0572b;color:#e0572b;" title="Available once a round is live">⏩ Accelerate (1000)</button>
+      </div>
       <div class="error-msg" id="errorMsg"></div>
       <div class="tx-progress hide" id="txProgress">
         <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
@@ -949,6 +952,7 @@
     const amountInput = document.getElementById("amountInput");
     const sendBtn = document.getElementById("sendBtn");
     const speedupBtn = document.getElementById("speedupBtn");
+    const accelerateBtn = document.getElementById("accelerateBtn");
     const errorMsg = document.getElementById("errorMsg");
     const txProgressEl = document.getElementById("txProgress");
     const entryList = document.getElementById("entryList");
@@ -1038,6 +1042,12 @@
       const ms = (gameData && gameData.speedupDurationMs) || 1800000;
       const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
       return "⚡ sped up — " + txt;
+    }
+
+    function accelerateLabel() {
+      const ms = (gameData && gameData.accelerateDurationMs) || 600000;
+      const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
+      return "⏩ accelerated — " + txt;
     }
 
     // The streak the current leader would reach if they win this round. The
@@ -1198,6 +1208,7 @@
       amountInput.disabled = !!v;
       saveUsernameBtn.disabled = !!v;
       updateSpeedupBtn();
+      updateAccelerateBtn();
       if (v) startProgressBar();
       else if (txSucceeded) completeProgressBar();
       else { stopProgressBar(); txProgressEl.classList.add("hide"); }
@@ -1222,6 +1233,18 @@
       void potDisplay.offsetWidth;
       potDisplay.classList.add("flash");
       potDisplay.addEventListener("animationend", () => potDisplay.classList.remove("flash"), { once: true });
+    }
+
+    function updateAccelerateBtn() {
+      if (!accelerateBtn) return;
+      const cost = (gameData && gameData.accelerateCost) || 1000;
+      accelerateBtn.textContent = "⏩ Accelerate (" + cost + ")";
+      // Enabled only when not mid-send, the game has loaded, and a round is
+      // live (a leader exists and the round isn't already expired / paying out).
+      const roundLive = !!(gameData && gameData.lastSender) &&
+        !(gameData && gameData.timerExpired) &&
+        !(gameData && gameData.payoutInProgress);
+      accelerateBtn.disabled = sending || !appPubkey || !roundLive;
     }
 
     /* ── Render ─────────────────────────────────────────────── */
@@ -1264,6 +1287,7 @@
         megaBanner.classList.add("hide");
       }
       updateSpeedupBtn();
+      updateAccelerateBtn();
 
       const isLeading = myAddress && gameData.lastSender === myAddress;
 
@@ -1342,6 +1366,8 @@
       for (const e of chronoEntries) {
         if (e.kind === "speedup") {
           entryLabels[e.txId] = speedupLabel();
+        } else if (e.kind === "accelerate") {
+          entryLabels[e.txId] = accelerateLabel();
         } else if (prevEntrySender === e.from) {
           entryLabels[e.txId] = "entered again";
         } else if (seenSenders.has(e.from)) {
@@ -1407,6 +1433,7 @@
               let prev = null;
               for (const e of chrono) {
                 if (e.kind === "speedup") labels[e.txId] = speedupLabel();
+                else if (e.kind === "accelerate") labels[e.txId] = accelerateLabel();
                 else if (prev === e.from) labels[e.txId] = "entered again";
                 else if (seen.has(e.from)) labels[e.txId] = "retook the lead";
                 else labels[e.txId] = "entered — timer reset";
@@ -1512,13 +1539,15 @@
 
       const pot = gameData ? (gameData.potBalance || 0) : 0;
       const entries = (gameData && gameData.entries) || [];
-      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0;
+      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0,
+          acceleratesSum = 0, acceleratesCount = 0;
       for (const e of entries) {
         const amt = Number(e.amount) || 0;
         if (e.kind === "speedup") { speedupsSum += amt; speedupsCount++; }
+        else if (e.kind === "accelerate") { acceleratesSum += amt; acceleratesCount++; }
         else { entriesSum += amt; entriesCount++; }
       }
-      const recentSum = entriesSum + speedupsSum;
+      const recentSum = entriesSum + speedupsSum + acceleratesSum;
       const earlier = Math.max(0, pot - recentSum);
       const cost = (gameData && gameData.speedupCost) || 100;
       const leader = gameData && gameData.lastSender;
@@ -1567,6 +1596,7 @@
         list.className = "entry-list";
         list.appendChild(pbContribRow("Entries", entriesCount, entriesSum, false));
         list.appendChild(pbContribRow("⚡ Speed-ups", speedupsCount, speedupsSum, true));
+        list.appendChild(pbContribRow("⏩ Accelerates", acceleratesCount, acceleratesSum, true));
         if (earlier > 0) list.appendChild(pbContribRow("Earlier contributions", null, earlier, false));
         potBreakdownBody.appendChild(list);
 
@@ -1725,6 +1755,41 @@
         setSending(false, false);
         console.error("[lastwin] speed-up sendTransaction failed", e);
         showError(describeSendError(e, "Speed-up failed: ", cost));
+      }
+    });
+
+    /* ── Accelerate handler ────────────────────────────────────── */
+    accelerateBtn.addEventListener("click", async () => {
+      if (sending) return;
+      showError("");
+
+      if (!appPubkey) {
+        showError("Game not loaded yet — please wait.");
+        return;
+      }
+
+      const cost = (gameData && gameData.accelerateCost) || 1000;
+      const memo = JSON.stringify({ app: "lastwin", type: "accelerate" });
+      if (memo.length > 1024) {
+        showError("Payload too large.");
+        return;
+      }
+
+      try {
+        setSending(true);
+        const prevPot = gameData ? gameData.potBalance : 0;
+        await window.sendTransaction(appPubkey, cost, memo, { ...TX_SEND_OPTS, confirmTitle: "Accelerate the clock", confirmSubtitle: "Last One Wins — spend " + cost + " to set a fresh 10-minute fuse and take the lead." });
+        setSending(false, true);
+        showError("");
+        for (let i = 0; i < 5; i++) {
+          await pollGameState();
+          if (gameData && gameData.potBalance !== prevPot) break;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (e) {
+        setSending(false, false);
+        console.error("[lastwin] accelerate sendTransaction failed", e);
+        showError(describeSendError(e, "Accelerate failed: ", cost));
       }
     });
 

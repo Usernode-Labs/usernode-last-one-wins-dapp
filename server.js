@@ -50,6 +50,7 @@ loadEnvFile();
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
 const FORCE_MEGA = LOCAL_DEV && process.argv.includes("--force-mega");
+const IS_STAGING = process.env.USERNODE_ENV === "staging";
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // ── Game config ──────────────────────────────────────────────────────────────
@@ -110,6 +111,44 @@ const game = createLastOneWins({
 // and triggers /wallet/send when one is found); chain plumbing (recipient +
 // sender pollers, backfill, mock drain) is in gameCache below.
 game.start();
+
+// ── Staging / local-dev demo seed ────────────────────────────────────────────
+// The Accelerate (and Speed-up) UI is data-driven: the Recent Activity feed and
+// Pot Breakdown only show their accelerate rows once an accelerate tx exists.
+// Staging starts from a copy of prod but has no guaranteed live round, and
+// --local-dev starts with an empty mock store, so we inject obviously-fake
+// "Staging demo" transactions through processTransaction (which is exactly how
+// real/mock chain txs reach the game) to make the new UI verifiable. This only
+// mutates in-memory game state — it never sends a real /wallet/send (payouts
+// fire from checkPayout, not from ingesting a payout tx), and it's a strict
+// no-op in production. Seeding is idempotent: processTransaction dedups by tx id.
+function seedDemoTransactions() {
+  if (!(LOCAL_DEV || IS_STAGING)) return;
+  const now = Date.now();
+  const ALICE = "ut1_staging_demo_alice";
+  const BOB = "ut1_staging_demo_bob";
+  const CAROL = "ut1_staging_demo_carol";
+  const memo = (obj) => JSON.stringify(obj);
+  const txs = [
+    // Friendly display names for the demo players.
+    { id: "seed_name_alice", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoAlice" }) },
+    { id: "seed_name_bob", from_pubkey: BOB, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoBob" }) },
+    { id: "seed_name_carol", from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoCarol" }) },
+    // Completed past round: an entry, an accelerate that takes the lead, payout.
+    { id: "seed_r1_entry", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 50, timestamp_ms: now - 3600000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r1_accel", from_pubkey: BOB, destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now - 3540000, memo: memo({ app: "lastwin", type: "accelerate" }) },
+    { id: "seed_r1_payout", from_pubkey: APP_PUBKEY, destination_pubkey: BOB, amount: 1050, timestamp_ms: now - 3480000, memo: memo({ app: "lastwin", type: "payout", round: 1, winner: BOB }) },
+    // Active round: an entry, then an accelerate that takes the lead now.
+    { id: "seed_r2_entry", from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 80, timestamp_ms: now - 60000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r2_accel", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now, memo: memo({ app: "lastwin", type: "accelerate" }) },
+  ];
+  for (const tx of txs) {
+    if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
+    game.processTransaction(tx);
+  }
+  console.log(`[seed] injected ${txs.length} demo txs (${LOCAL_DEV ? "local-dev" : "staging"}) — incl. accelerate rows`);
+}
+seedDemoTransactions();
 
 const gameCache = createAppStateCache({
   name: "lastwin",
