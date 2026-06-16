@@ -261,6 +261,31 @@
       font-size: 14px;
     }
 
+    /* Leaderboard */
+    .leaderboard-list { display: grid; gap: 6px; margin-top: 10px; }
+    .lb-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      border: 1px solid var(--border);
+    }
+    .lb-rank {
+      flex: 0 0 auto; min-width: 24px; text-align: center;
+      font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .lb-name {
+      flex: 1 1 auto; min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .lb-you {
+      font-size: 11px; color: var(--accent); font-weight: 600; margin-left: 6px;
+    }
+    .lb-flame { margin-left: 4px; }
+    .lb-wins {
+      flex: 0 0 auto; font-weight: 600; white-space: nowrap; color: var(--gold);
+    }
+    .lb-row.self { border-color: var(--accent); background: rgba(110,168,254,0.08); }
+    .lb-row.self .lb-name { color: var(--accent); }
+
     /* Status */
     .status-bar {
       display: flex; justify-content: space-between; align-items: center;
@@ -444,6 +469,13 @@
 
     <hr />
 
+    <div class="section-title">Leaderboard</div>
+    <div class="leaderboard-list" id="leaderboardList">
+      <div class="empty-state">No winners yet &mdash; be the first to take a round!</div>
+    </div>
+
+    <hr />
+
     <div class="section-title">Recent Activity</div>
     <div class="entry-list" id="entryList">
       <div class="empty-state">No entries yet</div>
@@ -493,6 +525,7 @@
     const errorMsg = document.getElementById("errorMsg");
     const txProgressEl = document.getElementById("txProgress");
     const entryList = document.getElementById("entryList");
+    const leaderboardList = document.getElementById("leaderboardList");
     const statusDot = document.getElementById("statusDot");
     const statusText = document.getElementById("statusText");
     const myAddressEl = document.getElementById("myAddress");
@@ -735,6 +768,58 @@
       speedupBtn.disabled = sending || !appPubkey || !roundLive;
     }
 
+    /* ── Leaderboard ────────────────────────────────────────── */
+    const RANK_MEDALS = ["🥇", "🥈", "🥉"]; // 🥇🥈🥉
+    function renderLeaderboard() {
+      const rows = (gameData && gameData.leaderboard) || [];
+      leaderboardList.innerHTML = "";
+      if (rows.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "No winners yet — be the first to take a round!";
+        leaderboardList.appendChild(empty);
+        return;
+      }
+      // The active streak holder, if their streak is worth a flame marker.
+      const cs = gameData.currentStreak;
+      const flameAddr = cs && cs.count >= 2 ? cs.winner : null;
+
+      rows.forEach((row, i) => {
+        const el = document.createElement("div");
+        const isSelf = myAddress && row.pubkey === myAddress;
+        el.className = "lb-row" + (isSelf ? " self" : "");
+
+        const rank = document.createElement("div");
+        rank.className = "lb-rank";
+        rank.textContent = i < RANK_MEDALS.length ? RANK_MEDALS[i] : "#" + (i + 1);
+        el.appendChild(rank);
+
+        const nameEl = document.createElement("div");
+        nameEl.className = "lb-name";
+        nameEl.textContent = displayName(row.pubkey);
+        if (row.pubkey === flameAddr) {
+          const flame = document.createElement("span");
+          flame.className = "lb-flame";
+          flame.textContent = "🔥"; // 🔥
+          nameEl.appendChild(flame);
+        }
+        if (isSelf) {
+          const you = document.createElement("span");
+          you.className = "lb-you";
+          you.textContent = "You";
+          nameEl.appendChild(you);
+        }
+        el.appendChild(nameEl);
+
+        const wins = document.createElement("div");
+        wins.className = "lb-wins";
+        wins.textContent = row.wins + (row.wins === 1 ? " win" : " wins");
+        el.appendChild(wins);
+
+        leaderboardList.appendChild(el);
+      });
+    }
+
     /* ── Render ─────────────────────────────────────────────── */
     function render() {
       if (!gameData) return;
@@ -820,6 +905,8 @@
           "+ rounds in a row for a token bonus on top of the pot (" + pct +
           "% per extra win) — the longer the streak, the bigger the reward";
       }
+
+      renderLeaderboard();
 
       entryList.innerHTML = "";
       const items = [];

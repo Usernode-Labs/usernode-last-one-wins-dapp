@@ -47,6 +47,10 @@ loadEnvFile();
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
+// Staging previews run `node server.js` (no --local-dev) against the chain,
+// so a mock-store seed alone wouldn't populate them. We additionally seed the
+// in-memory game pipeline directly when IS_STAGING. Strict no-op in production.
+const IS_STAGING = process.env.USERNODE_ENV === "staging";
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // ── Game config ──────────────────────────────────────────────────────────────
@@ -87,6 +91,90 @@ const game = createLastOneWins({
 // and triggers /wallet/send when one is found); chain plumbing (recipient +
 // sender pollers, backfill, mock drain) is in gameCache below.
 game.start();
+
+// ── Staging / local-dev seed ─────────────────────────────────────────────────
+// The leaderboard (and Recent Activity) render nothing until rounds have been
+// won, which is hard to reach by clicking around. Seed a deterministic set of
+// fake players and completed rounds so previews show a varied ranking. Strictly
+// gated: never runs in production (LOCAL_DEV false and USERNODE_ENV !==
+// "staging"), so real chain history is replayed untouched there.
+//
+// Builds raw txs (matching the chain shape normalizeTx accepts): set_username
+// memos, then per round an `entry` (to the app) and a `payout` (from the app).
+// Win distribution: demo-alice 3, demo-bob 2, demo-carol 2 (a tie), demo-dave 1,
+// with demo-alice taking the last two rounds so the 🔥 streak marker shows.
+function buildSeedTransactions() {
+  const players = {
+    alice: "ut1stagingdemoalice00000000000000000000000",
+    bob: "ut1stagingdemobob000000000000000000000000",
+    carol: "ut1stagingdemocarol00000000000000000000000",
+    dave: "ut1stagingdemodave000000000000000000000000",
+  };
+  // Round winners in order — uneven totals, a tie, and a closing alice streak.
+  const order = ["dave", "bob", "carol", "alice", "bob", "carol", "alice", "alice"];
+  const txs = [];
+  // Fixed timestamps in the past so the checkPayout TIMER_CHANGE_TS guard
+  // suppresses any seeded round (all are closed anyway — no payout side effect).
+  let ts = Date.now() - 3600000; // 1h ago
+  const step = 30000;            // 30s between events
+  const memo = (o) => JSON.stringify(o);
+
+  for (const [handle, addr] of Object.entries(players)) {
+    txs.push({
+      id: `seed_username_${handle}`,
+      from_pubkey: addr,
+      destination_pubkey: APP_PUBKEY,
+      amount: 0,
+      memo: memo({ app: "lastwin", type: "set_username", username: `demo-${handle}` }),
+      created_at: new Date(ts).toISOString(),
+    });
+    ts += step;
+  }
+
+  order.forEach((handle, i) => {
+    const round = i + 1;
+    const winner = players[handle];
+    const amount = 50 + i * 10; // varied pots: 50, 60, 70, …
+    // Entry from the winner (grows the pot, sets last sender for the round).
+    txs.push({
+      id: `seed_entry_${round}`,
+      from_pubkey: winner,
+      destination_pubkey: APP_PUBKEY,
+      amount,
+      memo: memo({ app: "lastwin", type: "entry" }),
+      created_at: new Date(ts).toISOString(),
+    });
+    ts += step;
+    // Payout from the app to the winner (advances the round, tallies the win).
+    txs.push({
+      id: `seed_payout_${round}`,
+      from_pubkey: APP_PUBKEY,
+      destination_pubkey: winner,
+      amount,
+      memo: memo({ app: "lastwin", type: "payout", round, winner }),
+      created_at: new Date(ts).toISOString(),
+    });
+    ts += step;
+  });
+
+  return txs;
+}
+
+if (LOCAL_DEV || IS_STAGING) {
+  const seed = buildSeedTransactions();
+  if (LOCAL_DEV) {
+    // Mock mode: hand the txs to the mock store; the caches' mock drain replays
+    // them through processTransaction (and the global usernames cache too).
+    for (const tx of seed) mockApi.transactions.push(tx);
+    console.log(`[seed] local-dev: queued ${seed.length} mock seed txs`);
+  } else {
+    // Staging: the live chain pollers won't carry our fake txs, so feed the
+    // game pipeline directly. The global usernames cache is bypassed, but the
+    // game's own usernames map (exposed via /__game/state) backs the names.
+    for (const tx of seed) game.processTransaction(tx);
+    console.log(`[seed] staging: injected ${seed.length} seed txs into game state`);
+  }
+}
 
 const gameCache = createAppStateCache({
   name: "lastwin",
