@@ -31,6 +31,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
+const webPush = require("web-push");
 
 const {
   loadEnvFile,
@@ -42,11 +43,13 @@ const {
   createDappServerStatus,
 } = require("./lib/dapp-server");
 const createLastOneWins = require("./game-logic");
+const pushStore = require("./lib/push-store");
 
 loadEnvFile();
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
+const FORCE_MEGA = LOCAL_DEV && process.argv.includes("--force-mega");
 const IS_STAGING = process.env.USERNODE_ENV === "staging";
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
@@ -55,6 +58,24 @@ const APP_PUBKEY = process.env.APP_PUBKEY || "ut1_lastwin_default_pubkey";
 const APP_SECRET_KEY = process.env.APP_SECRET_KEY || "";
 const NODE_RPC_URL = process.env.NODE_RPC_URL || "http://usernode-node:3000";
 const TIMER_DURATION_MS = parseInt(process.env.TIMER_DURATION_MS, 10) || 14400000;
+
+// ── Push notifications config ─────────────────────────────────────────────────
+// If VAPID_PRIVATE_KEY is absent the feature is silently disabled: the bell is
+// hidden on the client, and sendPush is a no-op in the game logic.
+let pushEnabled = false;
+if (process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webPush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:admin@example.com",
+      process.env.VAPID_PUBLIC_KEY || "",
+      process.env.VAPID_PRIVATE_KEY
+    );
+    pushStore.init(webPush);
+    pushEnabled = true;
+  } catch (e) {
+    console.error("[push] VAPID init failed:", e.message);
+  }
+}
 
 // ── Express app ──────────────────────────────────────────────────────────────
 const app = express();
@@ -83,6 +104,8 @@ const game = createLastOneWins({
   timerDurationMs: TIMER_DURATION_MS,
   localDev: LOCAL_DEV,
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
+  pushStore: pushEnabled ? pushStore : null,
+  forceMega: FORCE_MEGA,
 });
 // game.start() runs the payout timer (checks every 5s for an expired round
 // and triggers /wallet/send when one is found); chain plumbing (recipient +
@@ -256,6 +279,33 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Push notification routes ──────────────────────────────────────────────────
+// Lastwin is a public app (no JWT middleware), so these routes are reachable by
+// any visitor. express.json() is scoped to this router only.
+const pushRouter = express.Router();
+pushRouter.use(express.json());
+
+pushRouter.get("/vapid-public-key", (_req, res) => {
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+pushRouter.post("/subscribe", (req, res) => {
+  const { subscription, address } = req.body || {};
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: "Invalid subscription" });
+  }
+  pushStore.subscribe(subscription.endpoint, subscription, address || null);
+  res.json({ ok: true });
+});
+
+pushRouter.delete("/subscribe", (req, res) => {
+  const { endpoint } = req.body || {};
+  if (endpoint) pushStore.unsubscribe(endpoint);
+  res.json({ ok: true });
+});
+
+app.use("/__push", pushRouter);
+
 // ── Static assets ────────────────────────────────────────────────────────────
 // usernode-bridge.js, usernode-usernames.js, usernode-loading.js, and any
 // future CSS/images. These are always served — they're public infrastructure,
@@ -321,5 +371,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Node RPC:      ${NODE_RPC_URL}`);
   console.log(`  Timer:         ${timerMinutes} minutes`);
   console.log(`  Mode:          ${LOCAL_DEV ? "LOCAL DEV (mock API)" : "production (chain pollers running, public access)"}`);
-  console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}\n`);
+  console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}`);
+  console.log(`  Push:          ${pushEnabled ? "enabled" : "disabled (no VAPID keys)"}\n`);
 });
