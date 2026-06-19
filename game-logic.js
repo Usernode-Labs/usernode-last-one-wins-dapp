@@ -45,6 +45,7 @@ function createLastOneWins(opts) {
   const timerDurationMs = opts.timerDurationMs || 14400000;
   const localDev = !!opts.localDev;
   const mockTransactions = opts.mockTransactions || null;
+  const pushStore = opts.pushStore || null;
 
   const MOCK_TIMER_DURATION_MS = 120000;
 
@@ -54,6 +55,13 @@ function createLastOneWins(opts) {
   const SPEEDUP_DURATION_MS = 1800000; // 30 min
   const MOCK_SPEEDUP_DURATION_MS = 30000; // 30s — shorter than the 2-min mock base
 
+  // Accelerate action: spend ACCELERATE_COST tokens to set a fresh 10-minute
+  // fuse on the current round and take the lead (see "Accelerate" in CLAUDE.md).
+  // Behaves exactly like a speed-up but with a tighter fuse and higher cost.
+  const ACCELERATE_COST = 1000;
+  const ACCELERATE_DURATION_MS = 600000; // 10 min
+  const MOCK_ACCELERATE_DURATION_MS = 20000; // 20s — shorter than the 30s mock speed-up
+
   // Win streak bonuses: a player who wins consecutive rounds earns an
   // operator-funded bonus on top of the full pot (see "Win Streak Bonuses").
   // The bonus is drawn from the app wallet's own surplus, sent as a separate
@@ -61,6 +69,14 @@ function createLastOneWins(opts) {
   const STREAK_BONUS_MIN = 2;        // min consecutive wins to earn a bonus
   const STREAK_BONUS_PCT = 0.10;     // bonus fraction of pot per level beyond 1
   const STREAK_BONUS_MAX_PCT = 0.50; // cap on the bonus fraction
+
+  // Monday Mega Rounds: treasury seeds the pot with MEGA_ROUND_POT tokens when
+  // the first round of a Monday UTC begins. Set MEGA_ROUND_ENABLED=false to
+  // disable without a code change. --force-mega (local-dev only) overrides
+  // isMondayUTC() so the feature can be exercised any day.
+  const MEGA_ROUND_ENABLED = process.env.MEGA_ROUND_ENABLED !== "false";
+  const MEGA_ROUND_POT = parseInt(process.env.MEGA_ROUND_POT, 10) || 1000;
+  const forceMega = !!(localDev && opts.forceMega);
 
   // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
   const TIMER_CHANGE_TS = Date.now();
@@ -74,6 +90,9 @@ function createLastOneWins(opts) {
     entries: [],
     pastRounds: [],
     payoutInProgress: false,
+    urgentNotified: false,  // true once the ≤60s push has been sent for this round
+    isMegaRound: false,    // true when the current round is a Monday Mega Round
+    megaSeedSent: false,   // guards against duplicate mega seed sends per round
     // Win streaks (derived from the ordered payout sequence, not persisted).
     streaks: new Map(),   // pubkey → { count, lastWonRound }
     currentStreak: null,  // { winner, count, lastRound } or null before any payout
@@ -93,6 +112,14 @@ function createLastOneWins(opts) {
 
   function getSpeedupDuration() {
     return localDev ? MOCK_SPEEDUP_DURATION_MS : SPEEDUP_DURATION_MS;
+  }
+
+  function getAccelerateDuration() {
+    return localDev ? MOCK_ACCELERATE_DURATION_MS : ACCELERATE_DURATION_MS;
+  }
+
+  function isMondayUTC() {
+    return forceMega || new Date().getUTCDay() === 1;
   }
 
   function getTimeRemaining() {
@@ -164,6 +191,8 @@ function createLastOneWins(opts) {
       timerExpired: state.timerExpiresAt != null && Date.now() >= state.timerExpiresAt,
       speedupCost: SPEEDUP_COST,
       speedupDurationMs: getSpeedupDuration(),
+      accelerateCost: ACCELERATE_COST,
+      accelerateDurationMs: getAccelerateDuration(),
       streakBonusMin: STREAK_BONUS_MIN,
       streakBonusPct: STREAK_BONUS_PCT,
       streakBonusMaxPct: STREAK_BONUS_MAX_PCT,
@@ -176,6 +205,8 @@ function createLastOneWins(opts) {
       entries: state.entries.slice(-50).reverse(),
       pastRounds: state.pastRounds.slice(-20).reverse(),
       payoutInProgress: state.payoutInProgress,
+      isMegaRound: state.isMegaRound,
+      megaRoundPot: MEGA_ROUND_POT,
       appPubkey,
       usernames: usernameMap,
     };
@@ -226,9 +257,15 @@ function createLastOneWins(opts) {
       if (amount <= 0) return;
       state.potBalance += amount;
       if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        const prevSender = state.lastSender;
         state.lastSender = tx.from;
         state.lastEntryTs = tx.ts;
         state.timerExpiresAt = tx.ts + getTimerDuration();
+        if (prevSender && prevSender !== tx.from && pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(prevSender), {
+            title: "Last One Wins", body: "Someone just took the lead! Enter again before time runs out.", tag: "overtaken",
+          });
+        }
       }
       state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: "entry" });
       console.log(`[game] entry: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
@@ -241,12 +278,33 @@ function createLastOneWins(opts) {
       // tokens are never dropped. Out-of-order guard mirrors the entry path.
       const isSpeedup = amount >= SPEEDUP_COST;
       if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        const prevSender = state.lastSender;
         state.lastSender = tx.from;
         state.lastEntryTs = tx.ts;
         state.timerExpiresAt = tx.ts + (isSpeedup ? getSpeedupDuration() : getTimerDuration());
+        if (prevSender && prevSender !== tx.from && pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(prevSender), {
+            title: "Last One Wins", body: "Someone just took the lead! Enter again before time runs out.", tag: "overtaken",
+          });
+        }
       }
       state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isSpeedup ? "speedup" : "entry" });
       console.log(`[game] ${isSpeedup ? "speedup" : "entry(speedup-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
+    } else if (memo.type === "accelerate" && tx.to === appPubkey) {
+      const amount = tx.amount || 0;
+      if (amount <= 0) return;
+      state.potBalance += amount;
+      // A valid accelerate (>= ACCELERATE_COST) sets a fresh 10-min fuse and
+      // takes the lead, exactly like a speed-up. An underfunded accelerate memo
+      // falls back to a base-duration entry so the tokens are never dropped.
+      const isAccelerate = amount >= ACCELERATE_COST;
+      if (!state.lastEntryTs || tx.ts >= state.lastEntryTs) {
+        state.lastSender = tx.from;
+        state.lastEntryTs = tx.ts;
+        state.timerExpiresAt = tx.ts + (isAccelerate ? getAccelerateDuration() : getTimerDuration());
+      }
+      state.entries.push({ from: tx.from, amount, ts: tx.ts, txId: tx.id, kind: isAccelerate ? "accelerate" : "entry" });
+      console.log(`[game] ${isAccelerate ? "accelerate" : "entry(accelerate-underfunded)"}: ${tx.from.slice(0, 16)}… sent ${amount}, pot=${state.potBalance}, round=${state.roundNumber}`);
     } else if (memo.type === "payout" && tx.from === appPubkey) {
       const round = memo.round || state.roundNumber;
       const winner = memo.winner || tx.to;
@@ -270,6 +328,14 @@ function createLastOneWins(opts) {
         state.lastEntryTs = null;
         state.timerExpiresAt = null;
         state.entries = [];
+        state.urgentNotified = false;
+        state.isMegaRound = false;
+        state.megaSeedSent = false;
+        if (pushStore) {
+          pushStore.sendPush(pushStore.getAll(), {
+            title: "Last One Wins", body: "Round " + state.roundNumber + " has started — be the first to enter!", tag: "round-started",
+          });
+        }
       }
       console.log(`[game] payout detected: round ${round}, advancing to round ${state.roundNumber}`);
     } else if (memo.type === "bonus" && tx.from === appPubkey) {
@@ -284,6 +350,10 @@ function createLastOneWins(opts) {
         }
       }
       console.log(`[game] streak bonus detected: round ${round}, +${bonusInfo.amount} (streak ${bonusInfo.streak})`);
+    } else if (memo.type === "mega_seed" && tx.from === appPubkey && tx.to === appPubkey) {
+      state.potBalance += tx.amount || 0;
+      state.isMegaRound = true;
+      console.log(`[game] mega_seed: round ${state.roundNumber}, +${tx.amount} (pot=${state.potBalance})`);
     }
   }
 
@@ -398,6 +468,36 @@ function createLastOneWins(opts) {
     }
   }
 
+  // Best-effort Mega Round treasury seed. Sends MEGA_ROUND_POT tokens as a
+  // self-transfer from the app wallet. Injects a synthetic mega_seed tx so
+  // potBalance and isMegaRound update immediately without waiting for the poller.
+  async function sendMegaSeed(round) {
+    const memo = Buffer.from(JSON.stringify({ app: APP_ID, type: "mega_seed", round })).toString("base64url");
+    try {
+      const resp = await httpJson("POST", `${nodeRpcUrl}/wallet/send`, {
+        from_pk_hash: appPubkey, amount: MEGA_ROUND_POT, to_pk_hash: appPubkey, fee: 0, memo,
+      });
+      if (resp && resp.queued) {
+        console.log(`[mega] seed ${MEGA_ROUND_POT} tokens for round ${round}`);
+        const syntheticSeed = {
+          id: `mega_seed_${round}_${Date.now()}`,
+          from_pubkey: appPubkey,
+          destination_pubkey: appPubkey,
+          amount: MEGA_ROUND_POT,
+          memo: JSON.stringify({ app: APP_ID, type: "mega_seed", round }),
+          created_at: new Date().toISOString(),
+        };
+        processTransaction(syntheticSeed);
+        return true;
+      }
+      console.warn("[mega] seed send failed:", resp);
+      return false;
+    } catch (e) {
+      console.warn("[mega] seed send error:", e.message);
+      return false;
+    }
+  }
+
   async function consolidateUtxos() {
     try {
       await httpJson("POST", `${nodeRpcUrl}/wallet/send`, {
@@ -417,7 +517,14 @@ function createLastOneWins(opts) {
   async function checkPayout() {
     if (state.payoutInProgress) return;
     if (!state.lastSender || !state.lastEntryTs) return;
-    if (getTimeRemaining() > 0) return;
+    const remaining = getTimeRemaining();
+    if (pushStore && !state.urgentNotified && remaining != null && remaining > 0 && remaining <= 60000) {
+      state.urgentNotified = true;
+      pushStore.sendPush(pushStore.getAll(), {
+        title: "⏰ Hurry!", body: "Only " + Math.ceil(remaining / 1000) + "s left — enter now to win " + state.potBalance + " tokens!", tag: "timer-urgent",
+      });
+    }
+    if (remaining > 0) return;
 
     // TODO: Remove after TIMER_CHANGE_TS + 86400000 (~24h after deploy).
     // Suppress payout for pre-deploy entries so the 8h→4h timer change
@@ -462,6 +569,22 @@ function createLastOneWins(opts) {
         processTransaction(bonusTx);
         console.log(`[payout] mock streak bonus injected: round ${round}, +${bonus} (streak ${streakCount})`);
       }
+      // Mock Mega Round seed so the visual treatment is observable in --local-dev.
+      if (MEGA_ROUND_ENABLED && isMondayUTC() && !state.megaSeedSent) {
+        state.isMegaRound = true;
+        state.megaSeedSent = true;
+        const seedTx = {
+          id: crypto.randomUUID(),
+          from_pubkey: appPubkey,
+          destination_pubkey: appPubkey,
+          amount: MEGA_ROUND_POT,
+          memo: JSON.stringify({ app: APP_ID, type: "mega_seed", round: state.roundNumber }),
+          created_at: new Date().toISOString(),
+        };
+        mockTransactions.push(seedTx);
+        processTransaction(seedTx);
+        console.log(`[mega] mock seed injected: round ${state.roundNumber}, +${MEGA_ROUND_POT}`);
+      }
       state.payoutInProgress = false;
       return;
     }
@@ -488,6 +611,18 @@ function createLastOneWins(opts) {
           id: `payout_${round}_${Date.now()}`,
         };
         processTransaction(syntheticTx);
+        if (pushStore) {
+          pushStore.sendPush(pushStore.getByAddress(winner), {
+            title: "🏆 You won!", body: "You won " + amount + " tokens! Payout is on its way.", tag: "you-won",
+          });
+        }
+        // Mega Round seed: if it's Monday UTC and this round hasn't seeded yet,
+        // send the treasury self-transfer to kick off the new Mega Round.
+        if (MEGA_ROUND_ENABLED && isMondayUTC() && !state.megaSeedSent) {
+          state.isMegaRound = true;
+          state.megaSeedSent = true;
+          await sendMegaSeed(state.roundNumber);
+        }
         // Streak bonus is best-effort and runs after the round has advanced;
         // it never blocks or reduces the main payout above.
         await maybeSendStreakBonus(winner, round, amount);
@@ -537,6 +672,9 @@ function createLastOneWins(opts) {
     state.entries = [];
     state.pastRounds = [];
     state.payoutInProgress = false;
+    state.urgentNotified = false;
+    state.isMegaRound = false;
+    state.megaSeedSent = false;
     state.streaks.clear();
     state.currentStreak = null;
     state.winCounts.clear();

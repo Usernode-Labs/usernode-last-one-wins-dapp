@@ -17,319 +17,747 @@
   <script>UsernodeLoading.init({ appName: "Last One Wins", streamKey: "lastwin" });</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
+
+    /* ── Design tokens ──────────────────────────────────────── */
     :root {
       color-scheme: light dark;
-      --bg: #0b0f16; --fg: #e7edf7; --muted: #a8b3c7;
-      --card: #141b26; --border: rgba(255,255,255,0.12);
-      --accent: #6ea8fe; --danger: #ff6b6b; --ok: #5dd39e;
-      --gold: #facc15; --gold-dim: rgba(250,204,21,0.15);
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #f7f8fb; --fg: #0b1220; --muted: #4b5568;
-        --card: #ffffff; --border: rgba(15,23,42,0.12);
-        --accent: #2563eb; --danger: #c81e1e; --ok: #0f766e;
-        --gold: #ca8a04; --gold-dim: rgba(202,138,4,0.12);
-      }
-    }
-    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-    body {
-      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
-        Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      background: var(--bg); color: var(--fg);
-      display: flex; flex-direction: column;
-      height: 100vh; height: 100dvh; overflow: hidden;
+
+      /* Color */
+      --bg: #0b0f16;
+      --bg-elev: #10161f;
+      --card: #161d2b;
+      --card-2: #1c2433;
+      --fg: #e7edf7;
+      --muted: #a8b3c7;
+      --border: rgba(255,255,255,0.10);
+      --accent: #6ea8fe;
+      --accent-strong: #4f8cff;
+      --danger: #ff6b6b;
+      --ok: #5dd39e;
+      --gold: #facc15;
+      --gold-dim: rgba(250,204,21,0.15);
+      --ring: rgba(110,168,254,0.45);
+
+      /* Elevation */
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20);
+      --shadow-md: 0 4px 20px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.28);
+      --shadow-lg: 0 12px 32px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.32);
+
+      /* Spacing */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+
+      /* Type scale */
+      --text-xs: 11px;
+      --text-sm: 13px;
+      --text-base: 15px;
+      --text-lg: 18px;
+      --text-xl: 24px;
+      --text-2xl: 36px;
+      --countdown: clamp(34px, 11vw, 48px);
     }
 
-    /* Three-zone layout */
-    .topBar {
-      flex: 0 0 auto; padding: 12px 16px;
-      border-bottom: 1px solid var(--border); text-align: center;
-      background: var(--card);
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f4f6fb;
+        --bg-elev: #ffffff;
+        --card: #ffffff;
+        --card-2: #f1f4fa;
+        --fg: #0b1220;
+        --muted: #4b5568;
+        --border: rgba(15,23,42,0.10);
+        --accent: #2563eb;
+        --accent-strong: #1d4ed8;
+        --danger: #c81e1e;
+        --ok: #0f766e;
+        --gold: #ca8a04;
+        --gold-dim: rgba(202,138,4,0.12);
+        --ring: rgba(37,99,235,0.35);
+        --shadow-sm: 0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.06);
+        --shadow-md: 0 4px 20px rgba(15,23,42,0.12), 0 2px 8px rgba(15,23,42,0.08);
+        --shadow-lg: 0 12px 32px rgba(15,23,42,0.16), 0 4px 12px rgba(15,23,42,0.10);
+      }
     }
-    .topBar .round { font-size: 14px; font-weight: 600; }
+
+    /* ── Base ───────────────────────────────────────────────── */
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
+        Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--fg);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    /* ── Content max-width wrapper ──────────────────────────── */
+    .content-wrap {
+      max-width: 480px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* ── Three-zone layout ──────────────────────────────────── */
+    .topBar {
+      flex: 0 0 auto;
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: var(--shadow-sm);
+    }
+    .topBar .content-wrap {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-4);
+    }
+
+    .scrollArea {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .scrollArea .content-wrap {
+      padding: var(--space-4) var(--space-4) var(--space-6);
+    }
+
+    .bottomBar {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: 0 -2px 16px rgba(0,0,0,0.18);
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
+    }
+    .bottomBar .content-wrap {
+      padding: var(--space-3) var(--space-4) 0;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      min-width: 0;
+      overflow: hidden;
+    }
+    .wordmark {
+      font-size: var(--text-sm);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      flex-shrink: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .round-chip {
+      font-size: var(--text-xs);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 3px 8px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-shrink: 0;
+    }
     .header-pill {
-      padding: 3px 10px; border-radius: 12px; font-size: 12px;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--accent); font-weight: 500; cursor: pointer;
-      max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 12px;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       transition: border-color 0.15s, background 0.15s;
     }
     .header-pill:hover { border-color: var(--accent); background: rgba(110,168,254,0.08); }
+    .header-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); border-radius: 12px; }
     .header-icon {
-      width: 28px; height: 28px; border-radius: 8px; font-size: 13px; font-weight: 700;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--muted); cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      font-size: var(--text-sm);
+      font-weight: 700;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.15s, color 0.15s;
+      flex-shrink: 0;
     }
     .header-icon:hover { border-color: var(--accent); color: var(--accent); }
+    .header-icon.push-active { border-color: var(--gold); color: var(--gold); }
+    .header-icon.push-active:hover { border-color: var(--gold); color: var(--gold); }
+    .header-icon:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 
-    /* Info overlay */
+    /* ── Hero card ──────────────────────────────────────────── */
+    .hero-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: var(--space-5) var(--space-4) var(--space-4);
+      text-align: center;
+      box-shadow: var(--shadow-md);
+      margin-bottom: var(--space-4);
+    }
+    .hero-meta {
+      font-size: var(--text-xs);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: var(--space-3);
+      min-height: 14px;
+    }
+    .countdown {
+      font-size: var(--countdown);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg);
+      line-height: 1.05;
+    }
+    .countdown.expired { color: var(--gold); }
+    .countdown.waiting {
+      font-size: var(--text-xl);
+      font-weight: 500;
+      color: var(--muted);
+      letter-spacing: 0;
+    }
+    .countdown.urgent { color: var(--danger); }
+    .hero-label {
+      font-size: var(--text-xs);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: var(--space-2);
+      min-height: 14px;
+    }
+    .hero-divider {
+      width: 40px;
+      height: 1px;
+      background: var(--border);
+      margin: var(--space-4) auto;
+    }
+    .pot {
+      font-size: var(--text-2xl);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--gold);
+      line-height: 1.05;
+      font-variant-numeric: tabular-nums;
+    }
+    .pot-label {
+      font-size: var(--text-xs);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: var(--space-1);
+    }
+    .personal-status-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 38px;
+      margin-top: var(--space-3);
+    }
+    .personal-status {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      padding: 6px 16px;
+      border-radius: 20px;
+      display: inline-block;
+      text-align: center;
+      line-height: 1.4;
+    }
+    .personal-status:empty { display: none; }
+    .personal-status.leading {
+      color: var(--ok);
+      background: rgba(93,211,158,0.12);
+      border: 1px solid rgba(93,211,158,0.25);
+    }
+    .personal-status.trailing {
+      color: var(--accent);
+      background: rgba(110,168,254,0.10);
+      border: 1px solid rgba(110,168,254,0.20);
+    }
+    .personal-status.won {
+      color: var(--gold);
+      background: var(--gold-dim);
+      border: 1px solid rgba(250,204,21,0.30);
+    }
+    @media (prefers-color-scheme: light) {
+      .personal-status.leading {
+        background: rgba(15,118,110,0.08);
+        border-color: rgba(15,118,110,0.20);
+      }
+      .personal-status.trailing {
+        background: rgba(37,99,235,0.08);
+        border-color: rgba(37,99,235,0.20);
+      }
+      .personal-status.won {
+        border-color: rgba(202,138,4,0.30);
+      }
+    }
+
+    /* ── Button system ──────────────────────────────────────── */
+    .btn {
+      flex: 1 1 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 11px var(--space-4);
+      border-radius: 12px;
+      border: none;
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+      color: #fff;
+      font-size: var(--text-base);
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: var(--shadow-sm);
+      min-height: 44px;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: translateY(1px); opacity: 0.85; }
+    .btn:focus-visible { outline: none; box-shadow: var(--shadow-sm), 0 0 0 3px var(--ring); }
+    .btn:disabled, .btn[aria-disabled="true"] {
+      opacity: 0.40;
+      cursor: not-allowed;
+      pointer-events: none;
+      transform: none;
+    }
+
+    .btn-speedup {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 9px var(--space-4);
+      border-radius: 12px;
+      border: 1.5px solid var(--gold);
+      background: transparent;
+      color: var(--gold);
+      font-size: var(--text-sm);
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, transform 0.1s, opacity 0.15s;
+      min-height: 40px;
+    }
+    .btn-speedup:hover { background: var(--gold); color: #1a1205; }
+    .btn-speedup:active { transform: translateY(1px); }
+    .btn-speedup:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(250,204,21,0.35); }
+    .btn-speedup:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .btn-sm {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 9px var(--space-4);
+      border-radius: 10px;
+      border: none;
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+      color: #fff;
+      font-size: var(--text-sm);
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: var(--shadow-sm);
+      min-height: 40px;
+    }
+    .btn-sm:hover { opacity: 0.9; }
+    .btn-sm:active { transform: translateY(1px); }
+    .btn-sm:focus-visible { outline: none; box-shadow: var(--shadow-sm), 0 0 0 3px var(--ring); }
+    .btn-sm:disabled { opacity: 0.40; cursor: not-allowed; }
+    .btn-sm.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .btn-sm.secondary:hover { border-color: var(--accent); }
+
+    /* ── Send form ──────────────────────────────────────────── */
+    .send-row {
+      display: flex;
+      gap: var(--space-2);
+      align-items: stretch;
+    }
+    .amount-affix {
+      flex: 0 0 108px;
+    }
+    .inputAffix {
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--bg);
+      transition: border-color 0.15s;
+      height: 100%;
+    }
+    .inputAffix:focus-within { border-color: var(--accent); }
+    .inputAffixField {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 10px var(--space-3);
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--fg);
+      font-size: var(--text-base);
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .inputAffixSuffix {
+      padding: 0 var(--space-3) 0 0;
+      color: var(--muted);
+      font-size: var(--text-xs);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .error-msg {
+      font-size: var(--text-sm);
+      color: var(--danger);
+      margin-top: var(--space-1);
+      min-height: 0;
+    }
+    .error-msg:empty { display: none; }
+
+    /* ── Progress bar ───────────────────────────────────────── */
+    .tx-progress { width: 100%; margin: 6px 0 2px; }
+    .tx-progress .tx-progress-track {
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .tx-progress .tx-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 2px;
+      background: var(--accent);
+      transition: width 0.4s ease-out, background-color 0.4s ease;
+    }
+    .tx-progress .tx-progress-fill.ok { background: var(--ok); }
+    .tx-progress .tx-progress-fill.warn { background: #e6a817; }
+    .tx-progress .tx-progress-fill.err { background: var(--danger); }
+    .tx-progress .tx-progress-label {
+      font-size: var(--text-xs);
+      color: var(--muted);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+    .tx-progress .tx-progress-label.warn { color: #e6a817; }
+    .tx-progress .tx-progress-label.err { color: var(--danger); font-weight: 700; }
+    .tx-progress.hide { display: none; }
+
+    /* ── Activity section ───────────────────────────────────── */
+    .section-title {
+      font-size: var(--text-xs);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 var(--space-3);
+    }
+    .entry-list { display: grid; gap: 6px; }
+
+    .entry-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px var(--space-3);
+      border-radius: 10px;
+      font-size: var(--text-sm);
+      border: 1px solid var(--border);
+      background: var(--card);
+      min-height: 46px;
+      transition: background 0.12s;
+    }
+    .entry-item.is-self {
+      border-left: 3px solid var(--accent);
+      padding-left: 10px;
+    }
+    .entry-item .entry-from { color: var(--muted); font-size: var(--text-xs); line-height: 1.4; }
+    .entry-item .entry-amount {
+      font-weight: 700;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: var(--text-sm);
+    }
+    .entry-item .entry-time { font-size: var(--text-xs); color: var(--muted); }
+    .entry-item.payout {
+      background: var(--gold-dim);
+      border-color: var(--gold);
+      cursor: pointer;
+      user-select: none;
+    }
+    .entry-item.payout:hover:not(.no-entries) { background: rgba(250,204,21,0.22); }
+    .entry-item.payout:active:not(.no-entries) { background: rgba(250,204,21,0.28); }
+    .entry-item.payout.no-entries { cursor: default; }
+    .entry-item.payout .entry-amount { color: var(--gold); }
+    .entry-item.payout .chevron {
+      display: inline-block;
+      font-size: var(--text-xs);
+      margin-right: 4px;
+      transition: transform 0.2s;
+      color: var(--gold);
+    }
+    .entry-item.payout.expanded .chevron { transform: rotate(90deg); }
+    .entry-item.payout.no-entries .chevron { display: none; }
+
+    .round-entries {
+      display: grid;
+      gap: 3px;
+      padding: 4px 0 4px 12px;
+      border-left: 2px solid rgba(250,204,21,0.40);
+      margin-left: 10px;
+    }
+    .round-entry {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: var(--text-xs);
+      border: 1px solid var(--border);
+      background: var(--card-2);
+      min-height: 38px;
+    }
+    .round-entry.is-self {
+      border-left: 3px solid var(--accent);
+      padding-left: 7px;
+    }
+    .round-entries .entry-from { color: var(--muted); font-size: var(--text-xs); }
+    .round-entries .entry-amount {
+      font-weight: 700;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .round-entries .entry-time { font-size: var(--text-xs); color: var(--muted); }
+
+    /* ── Empty state ────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: var(--space-6) var(--space-4) var(--space-5);
+    }
+    .empty-state-icon {
+      font-size: 28px;
+      line-height: 1;
+      margin-bottom: var(--space-3);
+    }
+    .empty-state-title {
+      font-size: var(--text-base);
+      font-weight: 700;
+      color: var(--fg);
+      margin-bottom: var(--space-2);
+    }
+    .empty-state-hint {
+      font-size: var(--text-sm);
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* ── Status bar ─────────────────────────────────────────── */
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: var(--space-2);
+      padding-bottom: var(--space-2);
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: var(--text-xs);
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--ok); }
+    .status-dot.err { background: var(--danger); }
+    .status-dot.pending { background: var(--gold); }
+    .my-address-tag {
+      font-size: var(--text-xs);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 6px;
+    }
+
+    /* ── Info overlay ───────────────────────────────────────── */
     .info-overlay {
       display: none;
       position: fixed;
       inset: 0;
       z-index: 200;
       background: rgba(0,0,0,0.75);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
       align-items: center;
       justify-content: center;
+      padding: var(--space-4);
     }
     .info-overlay.open { display: flex; }
     .info-content {
-      padding: 24px;
+      padding: var(--space-5);
       max-width: 380px;
-      width: 90%;
+      width: 100%;
       max-height: 80vh;
       max-height: 80dvh;
       overflow-y: auto;
       background: var(--card);
-      border-radius: 16px;
+      border-radius: 20px;
       border: 1px solid var(--border);
-      font-size: 13px;
+      box-shadow: var(--shadow-lg);
+      font-size: var(--text-sm);
       line-height: 1.6;
       color: var(--fg);
     }
-    .info-content h2 { margin: 0 0 10px; font-size: 17px; font-weight: 700; }
-    .info-content p { margin: 0 0 8px; }
-    .info-content ul { margin: 0 0 8px; padding-left: 18px; }
-    .info-content li { margin-bottom: 4px; }
-    .info-content .muted { color: var(--muted); font-size: 12px; }
-
-    .scrollArea {
-      flex: 1 1 auto; overflow-y: auto; min-height: 0;
-      padding: 0 16px;
+    .info-content h2 {
+      margin: 0 0 var(--space-3);
+      font-size: var(--text-lg);
+      font-weight: 800;
+      letter-spacing: -0.01em;
     }
-    .bottomBar {
-      flex: 0 0 auto; padding: 10px 16px;
-      border-top: 1px solid var(--border);
-      padding-bottom: max(10px, env(safe-area-inset-bottom));
-      background: var(--card);
-    }
-
-    /* Hero countdown */
-    .hero { text-align: center; padding: 20px 0 16px; }
-    .countdown {
-      font-size: 64px; font-weight: 900; letter-spacing: -2px;
-      font-variant-numeric: tabular-nums; color: var(--fg);
-      line-height: 1.05;
-      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.35);
-      transition: color 0.3s ease, text-shadow 0.3s ease, transform 0.3s ease;
-    }
-    .countdown.expired {
+    .info-content p { margin: 0 0 var(--space-2); }
+    .info-content ul { margin: 0 0 var(--space-2); padding-left: 18px; }
+    .info-content li { margin-bottom: 6px; }
+    .info-content .muted { color: var(--muted); font-size: var(--text-xs); }
+    .info-speedup-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 1px 7px;
+      border-radius: 8px;
+      border: 1px solid var(--gold);
       color: var(--gold);
-      text-shadow: 0 0 24px rgba(212, 175, 55, 0.5);
+      font-size: var(--text-xs);
+      font-weight: 700;
+      background: var(--gold-dim);
     }
-    .countdown.waiting {
-      color: var(--muted); font-size: 24px; font-weight: 500;
-      letter-spacing: 0; text-shadow: none;
-    }
-    /* Red-alert urgency: < 5 minutes remaining */
-    .countdown.urgent {
-      color: #ff2d2d;
-      text-shadow: 0 0 12px rgba(255, 45, 45, 0.55), 0 0 28px rgba(255, 45, 45, 0.35);
-      animation: countdownPulse 1s ease-in-out infinite;
-    }
-    @keyframes countdownPulse {
-      0%, 100% {
-        transform: scale(1);
-        color: #ff4d4d;
-        text-shadow: 0 0 10px rgba(255, 45, 45, 0.45), 0 0 22px rgba(255, 45, 45, 0.25);
-      }
-      50% {
-        transform: scale(1.06);
-        color: #ff0000;
-        text-shadow: 0 0 18px rgba(255, 0, 0, 0.85), 0 0 40px rgba(255, 0, 0, 0.5);
-      }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .countdown.urgent { animation: none; transform: none; }
-    }
-    .hero-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
-    .pot {
-      font-size: 40px; font-weight: 800; margin: 12px 0 2px;
-      color: var(--gold); line-height: 1.1;
-    }
-    .pot-label { font-size: 13px; color: var(--muted); }
-    .hero-copy { font-size: 13px; color: var(--muted); margin-top: 8px; }
-    .personal-status {
-      margin-top: 14px; font-size: 14px; font-weight: 500; min-height: 20px;
-    }
-    .personal-status.leading { color: var(--ok); }
-    .personal-status.trailing { color: var(--accent); }
-    .personal-status.won { color: var(--gold); }
+
+    /* ── Streak banner ──────────────────────────────────────── */
     .streak-banner {
-      margin-top: 10px; font-size: 13px; font-weight: 700;
-      color: var(--gold); min-height: 18px;
+      font-size: var(--text-sm);
+      font-weight: 700;
+      color: var(--gold);
+      text-align: center;
+      margin-top: var(--space-2);
+    }
+    .mega-banner {
+      font-size: 13px; font-weight: 700;
+      color: var(--gold); margin: 8px 0 4px; text-align: center;
+    }
+    .countdown.countdown-mega {
+      color: var(--gold);
+      text-shadow: 0 0 18px rgba(250, 204, 21, 0.35);
     }
 
-    hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 
-    /* Send form (horizontal row in footer) */
-    .section-title { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
-    .send-row {
-      display: flex; gap: 8px; align-items: center;
-    }
-    .send-row input {
-      width: 80px; flex: 0 0 80px;
-      padding: 10px 12px; border-radius: 10px;
-      border: 1px solid var(--border); background: transparent;
-      color: var(--fg); font-size: 16px; outline: none;
-      font-variant-numeric: tabular-nums;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-    .send-row input:focus { border-color: var(--accent); }
-    .btn {
-      flex: 1 1 auto;
-      display: inline-block; padding: 10px 16px; border-radius: 10px;
-      border: 1px solid var(--accent); background: var(--accent);
-      color: #fff; font-size: 15px; font-weight: 600;
-      cursor: pointer; text-align: center; transition: opacity 0.15s;
-    }
-    .btn:hover { opacity: 0.9; }
-    .btn:disabled, .btn[aria-disabled="true"] {
-      opacity: 0.45; cursor: not-allowed; pointer-events: none;
-    }
-    .error-msg {
-      font-size: 13px; color: var(--danger); margin-top: 4px;
-      min-height: 0;
-    }
-    .error-msg:empty { display: none; }
-
-    /* Progress bar */
-    .tx-progress { width: 100%; margin: 6px 0 2px; }
-    .tx-progress .tx-progress-track {
-      width: 100%; height: 6px; border-radius: 3px;
-      background: var(--border); overflow: hidden;
-    }
-    .tx-progress .tx-progress-fill {
-      height: 100%; width: 0%; border-radius: 3px;
-      background: var(--accent);
-      transition: width 0.4s ease-out, background-color 0.4s ease;
-    }
-    .tx-progress .tx-progress-fill.ok { background: #6ef0a8; }
-    .tx-progress .tx-progress-fill.warn { background: #e6a817; }
-    .tx-progress .tx-progress-fill.err { background: var(--danger); }
-    .tx-progress .tx-progress-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
-    .tx-progress .tx-progress-label.warn { color: #e6a817; }
-    .tx-progress .tx-progress-label.err { color: var(--danger); }
-    .tx-progress.hide { display: none; }
-
-    /* History */
-    .entry-list { display: grid; gap: 6px; margin-top: 10px; }
-    .entry-item {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 8px 12px; border-radius: 8px; font-size: 13px;
-      border: 1px solid var(--border);
-    }
-    .entry-item .entry-from { color: var(--muted); font-size: 12px; }
-    .entry-item .entry-amount { font-weight: 600; white-space: nowrap; }
-    .entry-item .entry-time { font-size: 11px; color: var(--muted); }
-    .entry-addr {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px; color: var(--muted); opacity: 0.85; letter-spacing: 0.2px;
-    }
-    .entry-addr.self { color: var(--accent); opacity: 1; }
-    .round-entries .entry-addr { font-size: 10px; }
-    .entry-item.payout {
-      background: var(--gold-dim); border-color: var(--gold);
-      cursor: pointer; user-select: none;
-    }
-    .entry-item.payout.no-entries { cursor: default; }
-    .entry-item.payout .entry-amount { color: var(--gold); }
-    .entry-item.payout .chevron {
-      display: inline-block; font-size: 10px; margin-right: 4px;
-      transition: transform 0.2s; color: var(--gold);
-    }
-    .entry-item.payout.expanded .chevron { transform: rotate(90deg); }
-    .entry-item.payout.no-entries .chevron { display: none; }
-    .round-entries {
-      display: grid; gap: 4px; padding: 4px 0 4px 16px;
-    }
-    .round-entries .round-entry {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 5px 10px; border-radius: 6px; font-size: 12px;
-      border: 1px solid var(--border); background: var(--bg);
-    }
-    .round-entries .entry-from { color: var(--muted); font-size: 11px; }
-    .round-entries .entry-amount { font-weight: 600; white-space: nowrap; font-size: 12px; }
-    .round-entries .entry-time { font-size: 10px; color: var(--muted); }
-
-    .empty-state {
-      text-align: center; color: var(--muted); padding: 20px 0;
-      font-size: 14px;
-    }
-
-    /* Leaderboard */
-    .leaderboard-list { display: grid; gap: 6px; margin-top: 10px; }
+    /* ── Leaderboard ────────────────────────────────────────── */
+    .leaderboard-list { display: grid; gap: 6px; }
     .lb-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: var(--text-sm);
       border: 1px solid var(--border);
     }
     .lb-rank {
-      flex: 0 0 auto; min-width: 24px; text-align: center;
-      font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+      min-width: 24px;
+      text-align: center;
+      font-weight: 600;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
     }
     .lb-name {
-      flex: 1 1 auto; min-width: 0; overflow: hidden;
-      text-overflow: ellipsis; white-space: nowrap;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .lb-you {
-      font-size: 11px; color: var(--accent); font-weight: 600; margin-left: 6px;
+      font-size: var(--text-xs);
+      color: var(--accent);
+      font-weight: 600;
+      margin-left: 6px;
     }
     .lb-flame { margin-left: 4px; }
     .lb-wins {
-      flex: 0 0 auto; font-weight: 600; white-space: nowrap; color: var(--gold);
+      flex: 0 0 auto;
+      font-weight: 600;
+      white-space: nowrap;
+      color: var(--gold);
     }
     .lb-row.self { border-color: var(--accent); background: rgba(110,168,254,0.08); }
     .lb-row.self .lb-name { color: var(--accent); }
 
-    /* Status */
-    .status-bar {
-      display: flex; justify-content: space-between; align-items: center;
-      font-size: 11px; color: var(--muted); margin-top: 6px;
+    /* ── Entry address line ─────────────────────────────────── */
+    .entry-addr {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--text-xs);
+      color: var(--muted);
+      opacity: 0.85;
+      letter-spacing: 0.2px;
     }
-    .status-dot {
-      display: inline-block; width: 7px; height: 7px;
-      border-radius: 50%; margin-right: 4px; vertical-align: middle;
-    }
-    .status-dot.ok { background: var(--ok); }
-    .status-dot.err { background: var(--danger); }
-    .status-dot.pending { background: var(--gold); }
+    .entry-addr.self { color: var(--accent); opacity: 1; }
+    .round-entries .entry-addr { font-size: 10px; }
 
-    /* Username edit form */
-    .inputAffix {
-      display: flex; align-items: center;
-      border: 1px solid var(--border); border-radius: 10px;
-      background: transparent;
-    }
-    .inputAffix:focus-within { border-color: var(--accent); }
-    .inputAffixField {
-      flex: 1 1 auto; min-width: 0; box-sizing: border-box;
-      padding: 10px 12px; border: 0; outline: 0;
-      background: transparent; color: var(--fg); font-size: 16px;
-    }
-    .inputAffixSuffix {
-      padding: 0 12px 0 0; color: var(--muted);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      white-space: nowrap; font-size: 14px;
-    }
-    .btn-sm {
-      display: inline-block; padding: 8px 14px; border-radius: 8px;
-      border: 1px solid var(--accent); background: var(--accent);
-      color: #fff; font-size: 13px; font-weight: 600;
-      cursor: pointer; transition: opacity 0.15s;
-    }
-    .btn-sm:hover { opacity: 0.9; }
-    .btn-sm:disabled { opacity: 0.45; cursor: not-allowed; }
-    .btn-sm.secondary { background: transparent; color: var(--accent); }
-
-    /* Bottom sheet (matches opinion-market pattern) */
+    /* ── Username bottom sheet ──────────────────────────────── */
     .bottomSheet-backdrop {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.45);
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.50);
       z-index: 100;
       opacity: 0;
       transition: opacity 0.25s ease;
@@ -338,90 +766,128 @@
     .bottomSheet-backdrop.open { opacity: 1; pointer-events: auto; }
     .bottomSheet {
       position: fixed;
-      bottom: 0; left: 0; right: 0;
+      bottom: 0;
+      left: 0;
+      right: 0;
       background: var(--card);
       border-top: 1px solid var(--border);
-      border-radius: 16px 16px 0 0;
-      padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+      border-radius: 20px 20px 0 0;
+      padding: 20px var(--space-4) calc(20px + env(safe-area-inset-bottom));
       z-index: 101;
       transform: translateY(100%);
       transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
       max-width: 500px;
       margin: 0 auto;
-      box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+      box-shadow: var(--shadow-lg);
     }
     .bottomSheet.open { transform: translateY(0); }
     .bottomSheet-handle {
-      width: 36px; height: 4px;
+      width: 36px;
+      height: 4px;
       border-radius: 2px;
       background: var(--border);
-      margin: 0 auto 16px;
+      margin: 0 auto var(--space-4);
     }
     .bottomSheet-header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
+      gap: var(--space-2);
+      margin-bottom: var(--space-3);
     }
-    .bottomSheet-title { font-weight: 600; font-size: 16px; }
+    .bottomSheet-title {
+      font-weight: 800;
+      font-size: var(--text-lg);
+      letter-spacing: -0.01em;
+    }
     .bottomSheet-action {
       width: 100%;
-      padding: 14px;
+      padding: 13px;
       border-radius: 12px;
       border: none;
-      background: var(--accent);
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
       color: #fff;
-      font-size: 15px;
-      font-weight: 600;
+      font-size: var(--text-base);
+      font-weight: 700;
       cursor: pointer;
-      transition: opacity 0.15s;
+      transition: opacity 0.15s, transform 0.1s;
+      box-shadow: var(--shadow-sm);
+      min-height: 46px;
     }
     .bottomSheet-action:hover { opacity: 0.9; }
-    .bottomSheet-action:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bottomSheet-action:active { transform: translateY(1px); }
+    .bottomSheet-action:focus-visible { outline: none; box-shadow: var(--shadow-sm), 0 0 0 3px var(--ring); }
+    .bottomSheet-action:disabled { opacity: 0.40; cursor: not-allowed; }
     .bottomSheet-cancel {
       width: 100%;
       padding: 10px;
-      margin-top: 8px;
-      border-radius: 10px;
+      margin-top: var(--space-2);
+      border-radius: 12px;
       border: 1px solid var(--border);
       background: transparent;
       color: var(--muted);
-      font-size: 14px;
-      font-weight: 500;
+      font-size: var(--text-sm);
+      font-weight: 600;
       cursor: pointer;
       transition: color 0.15s, border-color 0.15s;
     }
     .bottomSheet-cancel:hover { color: var(--fg); border-color: var(--fg); }
-    .bottomSheet-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
+    .bottomSheet-cancel:disabled { opacity: 0.40; cursor: not-allowed; }
 
+    /* ── Animations ─────────────────────────────────────────── */
+    @keyframes urgency-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+    @keyframes pot-flash {
+      0%   { transform: scale(1); }
+      30%  { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+    @keyframes status-pending-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .countdown.urgent { animation: urgency-pulse 0.9s ease-in-out infinite; }
+      .pot.flash { animation: pot-flash 0.45s ease-out; }
+      .status-dot.pending { animation: status-pending-blink 1.6s ease-in-out infinite; }
+    }
+
+    /* ── Utilities ──────────────────────────────────────────── */
     .hide { display: none !important; }
   </style>
 </head>
 <body>
   <!-- Header -->
   <header class="topBar">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;">
-      <div class="round" id="roundLabel">Round 1</div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <button class="header-pill" id="usernamePill" type="button" title="Change username"><span id="usernameDisplay">...</span></button>
+    <div class="content-wrap">
+      <div class="header-left">
+        <span class="wordmark">⚡ Last One Wins</span>
+        <span class="round-chip" id="roundLabel">Round 1</span>
+      </div>
+      <div class="header-right">
+        <button class="header-pill" id="usernamePill" type="button" title="Change username">
+          <span id="usernameDisplay">...</span>
+        </button>
         <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
+        <button class="header-icon" id="pushToggle" type="button" title="Toggle notifications" style="display:none">🔔</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
   </header>
 
-  <!-- Bottom sheet username editor -->
+  <!-- Username bottom sheet -->
   <div class="bottomSheet-backdrop" id="usernameBackdrop"></div>
   <div class="bottomSheet" id="usernameSheet">
     <div class="bottomSheet-handle"></div>
     <div class="bottomSheet-header">
       <span class="bottomSheet-title">Set your display name</span>
     </div>
-    <div class="inputAffix">
+    <div class="inputAffix" style="margin-bottom:12px;">
       <input id="usernameInput" class="inputAffixField" maxlength="24" placeholder="username" />
       <span id="usernameSuffix" class="inputAffixSuffix">_??????</span>
     </div>
-    <button class="bottomSheet-action" id="saveUsernameBtn" type="button" style="margin-top:12px;">Save</button>
+    <button class="bottomSheet-action" id="saveUsernameBtn" type="button">Save</button>
     <button class="bottomSheet-cancel" id="cancelUsernameBtn" type="button">Cancel</button>
     <div class="tx-progress hide" id="usernameTxProgress" style="margin-top:8px;">
       <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
@@ -429,6 +895,7 @@
     </div>
   </div>
 
+  <!-- Info overlay -->
   <div class="info-overlay" id="infoOverlay">
     <div class="info-content" id="infoContent">
       <h2>Last One Wins</h2>
@@ -437,7 +904,7 @@
         <li>Send any amount of tokens to enter the game</li>
         <li>Every entry resets the countdown and grows the pot</li>
         <li>When the timer hits zero, the last person to enter wins the entire pot</li>
-        <li>&#9889; <strong>Speed Up:</strong> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
+        <li><span class="info-speedup-badge">⚡ Speed Up</span> spend 100 tokens to jump into the lead and reset the clock to a fresh 30 minutes &mdash; force a fast showdown</li>
         <li>&#128293; <strong>Win Streaks:</strong> <span id="streakInfoText">win consecutive rounds for a bonus on top of the pot &mdash; the longer the streak, the bigger the reward</span></li>
         <li>A new round starts automatically &mdash; jump back in!</li>
       </ul>
@@ -456,49 +923,71 @@
 
   <!-- Scrollable content -->
   <div class="scrollArea">
-    <div class="hero">
-      <div class="countdown waiting" id="countdown">Waiting for first entry...</div>
-      <div class="hero-label" id="countdownLabel"></div>
-      <div class="hero-copy" id="mechanicLabel">Each entry resets the timer &mdash; last one wins</div>
-      <div class="pot" id="potDisplay">0</div>
-      <div class="pot-label">tokens in the pot</div>
-      <div class="hero-copy">Every entry increases the prize</div>
-      <div class="personal-status" id="personalStatus"></div>
-      <div class="streak-banner hide" id="streakBanner"></div>
-    </div>
+    <div class="content-wrap">
 
-    <hr />
+      <!-- Hero card -->
+      <div class="hero-card">
+        <div class="hero-meta" id="mechanicLabel">Each entry resets the timer &mdash; last one wins</div>
+        <div class="countdown waiting" id="countdown">Waiting for first entry...</div>
+        <div class="hero-label" id="countdownLabel"></div>
+        <div class="hero-divider"></div>
+        <div class="pot" id="potDisplay">0</div>
+        <div class="pot-label">Tokens in the Pot</div>
+        <div class="personal-status-wrap">
+          <div class="personal-status" id="personalStatus"></div>
+        </div>
+        <div class="mega-banner hide" id="megaBanner"></div>
+        <div class="streak-banner hide" id="streakBanner"></div>
+      </div>
 
-    <div class="section-title">Leaderboard</div>
-    <div class="leaderboard-list" id="leaderboardList">
-      <div class="empty-state">No winners yet &mdash; be the first to take a round!</div>
-    </div>
+      <!-- Recent activity -->
+      <div class="section-title" id="activityTitle">Recent Activity</div>
+      <div class="entry-list" id="entryList">
+        <div class="empty-state">
+          <div class="empty-state-icon">⏳</div>
+          <div class="empty-state-title">No entries yet</div>
+          <div class="empty-state-hint">Be the first to enter &mdash; your entry starts the countdown.</div>
+        </div>
+      </div>
 
-    <hr />
 
-    <div class="section-title">Recent Activity</div>
-    <div class="entry-list" id="entryList">
-      <div class="empty-state">No entries yet</div>
+      <!-- Leaderboard -->
+      <div class="section-title">Leaderboard</div>
+      <div class="leaderboard-list" id="leaderboardList">
+        <div class="empty-state">No winners yet &mdash; be the first to take a round!</div>
+      </div>
+
     </div>
   </div>
 
   <!-- Footer: send form + status -->
   <footer class="bottomBar">
-    <div class="send-row">
-      <input id="amountInput" type="number" min="1" max="1000" value="1" placeholder="Amt" />
-      <button class="btn" id="sendBtn">Enter Now</button>
-    </div>
-    <div class="send-row" style="margin-top:8px;">
-      <button class="btn" id="speedupBtn" style="background:var(--gold);border-color:var(--gold);color:#1a1205;">⚡ Speed Up (100)</button>
-    </div>
-    <div class="error-msg" id="errorMsg"></div>
-    <div class="tx-progress hide" id="txProgress">
-      <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
-      <div class="tx-progress-label">Sending...</div>
-    </div>
-    <div class="status-bar">
-      <span><span class="status-dot pending" id="statusDot"></span><span id="statusText">connecting...</span></span>
-      <span id="myAddress"></span>
+    <div class="content-wrap">
+      <div class="send-row">
+        <div class="inputAffix amount-affix">
+          <input id="amountInput" class="inputAffixField" type="number" min="1" max="1000" value="1" placeholder="Amt" />
+          <span class="inputAffixSuffix">tok</span>
+        </div>
+        <button class="btn" id="sendBtn">Enter Now</button>
+      </div>
+      <div style="margin-top:6px;">
+        <button class="btn-speedup" id="speedupBtn" title="Available once a round is live">⚡ Speed Up (100)</button>
+      </div>
+      <div style="margin-top:6px;">
+        <button class="btn-speedup" id="accelerateBtn" style="border-color:#e0572b;color:#e0572b;" title="Available once a round is live">⏩ Accelerate (1000)</button>
+      </div>
+      <div class="error-msg" id="errorMsg"></div>
+      <div class="tx-progress hide" id="txProgress">
+        <div class="tx-progress-track"><div class="tx-progress-fill"></div></div>
+        <div class="tx-progress-label">Sending...</div>
+      </div>
+      <div class="status-bar">
+        <div class="status-indicator">
+          <span class="status-dot pending" id="statusDot"></span>
+          <span id="statusText">connecting...</span>
+        </div>
+        <span class="my-address-tag" id="myAddress"></span>
+      </div>
     </div>
   </footer>
 
@@ -516,12 +1005,15 @@
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
     const personalStatusEl = document.getElementById("personalStatus");
+    const megaBanner = document.getElementById("megaBanner");
     const streakBanner = document.getElementById("streakBanner");
     const streakInfoText = document.getElementById("streakInfoText");
     const mechanicLabelEl = document.getElementById("mechanicLabel");
+    const activityTitle = document.getElementById("activityTitle");
     const amountInput = document.getElementById("amountInput");
     const sendBtn = document.getElementById("sendBtn");
     const speedupBtn = document.getElementById("speedupBtn");
+    const accelerateBtn = document.getElementById("accelerateBtn");
     const errorMsg = document.getElementById("errorMsg");
     const txProgressEl = document.getElementById("txProgress");
     const entryList = document.getElementById("entryList");
@@ -542,6 +1034,7 @@
     const potOverlay = document.getElementById("potOverlay");
     const potContent = document.getElementById("potContent");
     const potBreakdownBody = document.getElementById("potBreakdownBody");
+    const pushToggle = document.getElementById("pushToggle");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -551,8 +1044,23 @@
     let appPubkey = null;
     let myUsername = null;
     let usernameMap = {};
+    let pushReg = null;
+    let pushSub = null;
+    let prevPotBalance = null;
 
     /* ── Helpers ────────────────────────────────────────────── */
+    function setBellActive(active) {
+      if (!pushToggle) return;
+      pushToggle.classList.toggle("push-active", active);
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(base64);
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+
     function truncate(s, n) {
       if (!s || s.length <= n) return s || "";
       const h = Math.floor((n - 3) / 2);
@@ -587,13 +1095,21 @@
     function renderCountdown(ms) {
       countdownEl.textContent = formatCountdown(ms);
       const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
-      countdownEl.className = urgent ? "countdown urgent" : "countdown";
+      let cls = urgent ? "countdown urgent" : "countdown";
+      if (!urgent && gameData && gameData.isMegaRound) cls += " countdown-mega";
+      countdownEl.className = cls;
     }
 
     function speedupLabel() {
       const ms = (gameData && gameData.speedupDurationMs) || 1800000;
       const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
       return "⚡ sped up — " + txt;
+    }
+
+    function accelerateLabel() {
+      const ms = (gameData && gameData.accelerateDurationMs) || 600000;
+      const txt = ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + "s";
+      return "⏩ accelerated — " + txt;
     }
 
     // The streak the current leader would reach if they win this round. The
@@ -612,13 +1128,16 @@
     function wonMessage(winnerAddr, isSelf) {
       const streak = predictWinnerStreak();
       const min = (gameData && gameData.streakBonusMin) || 2;
+      const isMega = gameData && gameData.isMegaRound;
       if (isSelf) {
+        const megaSuffix = isMega ? " 🏆 Mega Round win!" : "";
         return streak >= min
-          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!"
-          : "You won! Payout incoming...";
+          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!" + megaSuffix
+          : "You won! Payout incoming..." + megaSuffix;
       }
       const note = streak >= min ? " 🔥 " + streak + "-win streak!" : "";
-      return displayName(winnerAddr) + " won this round!" + note;
+      const megaNote = isMega ? " 🏆 Mega Round!" : "";
+      return displayName(winnerAddr) + " won this round!" + note + megaNote;
     }
 
     function formatTime(ms) {
@@ -751,6 +1270,7 @@
       amountInput.disabled = !!v;
       saveUsernameBtn.disabled = !!v;
       updateSpeedupBtn();
+      updateAccelerateBtn();
       if (v) startProgressBar();
       else if (txSucceeded) completeProgressBar();
       else { stopProgressBar(); txProgressEl.classList.add("hide"); }
@@ -760,12 +1280,33 @@
       if (!speedupBtn) return;
       const cost = (gameData && gameData.speedupCost) || 100;
       speedupBtn.textContent = "⚡ Speed Up (" + cost + ")";
+      const roundLive = !!(gameData && gameData.lastSender) &&
+        !(gameData && gameData.timerExpired) &&
+        !(gameData && gameData.payoutInProgress);
+      speedupBtn.disabled = sending || !appPubkey || !roundLive;
+      speedupBtn.title = speedupBtn.disabled
+        ? "Available once a round is live"
+        : "Spend " + cost + " tokens to reset the clock to 30 minutes and take the lead";
+    }
+
+    /* ── Pot flash ──────────────────────────────────────────── */
+    function flashPot() {
+      potDisplay.classList.remove("flash");
+      void potDisplay.offsetWidth;
+      potDisplay.classList.add("flash");
+      potDisplay.addEventListener("animationend", () => potDisplay.classList.remove("flash"), { once: true });
+    }
+
+    function updateAccelerateBtn() {
+      if (!accelerateBtn) return;
+      const cost = (gameData && gameData.accelerateCost) || 1000;
+      accelerateBtn.textContent = "⏩ Accelerate (" + cost + ")";
       // Enabled only when not mid-send, the game has loaded, and a round is
       // live (a leader exists and the round isn't already expired / paying out).
       const roundLive = !!(gameData && gameData.lastSender) &&
         !(gameData && gameData.timerExpired) &&
         !(gameData && gameData.payoutInProgress);
-      speedupBtn.disabled = sending || !appPubkey || !roundLive;
+      accelerateBtn.disabled = sending || !appPubkey || !roundLive;
     }
 
     /* ── Leaderboard ────────────────────────────────────────── */
@@ -841,9 +1382,26 @@
         }
       }
 
-      roundLabel.textContent = "Round " + gameData.roundNumber;
-      potDisplay.textContent = String(gameData.potBalance);
+      roundLabel.textContent = gameData.isMegaRound
+        ? "🏆 Mega Round " + gameData.roundNumber
+        : "Round " + gameData.roundNumber;
+
+      // Pot: flash on change, then update
+      const newPot = gameData.potBalance;
+      if (prevPotBalance !== null && newPot !== prevPotBalance) {
+        flashPot();
+      }
+      prevPotBalance = newPot;
+      potDisplay.textContent = String(newPot);
+      if (gameData.isMegaRound) {
+        megaBanner.textContent = "🏆 Monday Mega Round · " + gameData.megaRoundPot + " tokens guaranteed";
+        megaBanner.classList.remove("hide");
+      } else {
+        megaBanner.textContent = "";
+        megaBanner.classList.add("hide");
+      }
       updateSpeedupBtn();
+      updateAccelerateBtn();
 
       const isLeading = myAddress && gameData.lastSender === myAddress;
 
@@ -868,15 +1426,21 @@
         countdownLabel.textContent = "Until pot is claimed";
         mechanicLabelEl.textContent = "Each entry resets the timer \u2014 last one wins";
         if (isLeading) {
-          personalStatusEl.textContent = "You\u2019re the last entry \u2014 hold until time runs out to win!";
+          personalStatusEl.textContent = "✓ You’re the last entry — hold until time runs out to win!";
           personalStatusEl.className = "personal-status leading";
           sendBtn.textContent = "Enter Again";
         } else {
-          personalStatusEl.textContent = displayName(gameData.lastSender) + " is in the lead \u2014 enter now!";
+          personalStatusEl.textContent = "→ " + displayName(gameData.lastSender) + " is in the lead — enter now!";
           personalStatusEl.className = "personal-status trailing";
           sendBtn.textContent = "Enter Now";
         }
       }
+
+      // Activity count in section title
+      const totalItems = (gameData.entries || []).length + (gameData.pastRounds || []).length;
+      activityTitle.textContent = totalItems > 0
+        ? "Recent Activity · " + totalItems
+        : "Recent Activity";
 
       // Active win-streak banner. currentStreak holds the most recent round's
       // winner and their consecutive-win count. Hidden during the expired/won
@@ -918,12 +1482,14 @@
       for (const e of chronoEntries) {
         if (e.kind === "speedup") {
           entryLabels[e.txId] = speedupLabel();
+        } else if (e.kind === "accelerate") {
+          entryLabels[e.txId] = accelerateLabel();
         } else if (prevEntrySender === e.from) {
           entryLabels[e.txId] = "entered again";
         } else if (seenSenders.has(e.from)) {
           entryLabels[e.txId] = "retook the lead";
         } else {
-          entryLabels[e.txId] = "entered \u2014 timer reset";
+          entryLabels[e.txId] = "entered — timer reset";
         }
         seenSenders.add(e.from);
         prevEntrySender = e.from;
@@ -940,7 +1506,10 @@
       if (items.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty-state";
-        empty.textContent = "No entries yet \u2014 be the first!";
+        empty.innerHTML =
+          '<div class="empty-state-icon">⏳</div>' +
+          '<div class="empty-state-title">No entries yet</div>' +
+          '<div class="empty-state-hint">Be the first to enter — your entry starts the countdown.</div>';
         entryList.appendChild(empty);
         return;
       }
@@ -965,7 +1534,7 @@
           if (!hasEntries) el.classList.add("no-entries");
           const chevron = document.createElement("span");
           chevron.className = "chevron";
-          chevron.textContent = "\u25b6";
+          chevron.textContent = "▶";
           fromEl.appendChild(chevron);
           fromEl.appendChild(document.createTextNode(
             "Round " + item.round + " won by " + name + " (" + item.entries.length + " entr" + (item.entries.length === 1 ? "y" : "ies") + ")"
@@ -980,9 +1549,10 @@
               let prev = null;
               for (const e of chrono) {
                 if (e.kind === "speedup") labels[e.txId] = speedupLabel();
+                else if (e.kind === "accelerate") labels[e.txId] = accelerateLabel();
                 else if (prev === e.from) labels[e.txId] = "entered again";
                 else if (seen.has(e.from)) labels[e.txId] = "retook the lead";
-                else labels[e.txId] = "entered \u2014 timer reset";
+                else labels[e.txId] = "entered — timer reset";
                 seen.add(e.from);
                 prev = e.from;
               }
@@ -994,8 +1564,8 @@
                 rf.className = "entry-from";
                 const eName = displayName(e.from);
                 const eSelf = myAddress && e.from === myAddress;
-                rf.textContent = eName + " " + (labels[e.txId] || "entered \u2014 timer reset");
-                if (eSelf) rf.style.color = "var(--accent)";
+                rf.textContent = eName + " " + (labels[e.txId] || "entered — timer reset");
+                if (eSelf) row.classList.add("is-self");
                 const rt = document.createElement("div");
                 rt.className = "entry-time";
                 rt.textContent = formatTime(e.ts);
@@ -1029,8 +1599,8 @@
             });
           }
         } else {
-          fromEl.textContent = name + " " + (entryLabels[item.txId] || "entered \u2014 timer reset");
-          if (isSelf) fromEl.style.color = "var(--accent)";
+          fromEl.textContent = name + " " + (entryLabels[item.txId] || "entered — timer reset");
+          if (isSelf) el.classList.add("is-self");
         }
         const timeEl = document.createElement("div");
         timeEl.className = "entry-time";
@@ -1085,13 +1655,15 @@
 
       const pot = gameData ? (gameData.potBalance || 0) : 0;
       const entries = (gameData && gameData.entries) || [];
-      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0;
+      let entriesSum = 0, entriesCount = 0, speedupsSum = 0, speedupsCount = 0,
+          acceleratesSum = 0, acceleratesCount = 0;
       for (const e of entries) {
         const amt = Number(e.amount) || 0;
         if (e.kind === "speedup") { speedupsSum += amt; speedupsCount++; }
+        else if (e.kind === "accelerate") { acceleratesSum += amt; acceleratesCount++; }
         else { entriesSum += amt; entriesCount++; }
       }
-      const recentSum = entriesSum + speedupsSum;
+      const recentSum = entriesSum + speedupsSum + acceleratesSum;
       const earlier = Math.max(0, pot - recentSum);
       const cost = (gameData && gameData.speedupCost) || 100;
       const leader = gameData && gameData.lastSender;
@@ -1140,6 +1712,7 @@
         list.className = "entry-list";
         list.appendChild(pbContribRow("Entries", entriesCount, entriesSum, false));
         list.appendChild(pbContribRow("⚡ Speed-ups", speedupsCount, speedupsSum, true));
+        list.appendChild(pbContribRow("⏩ Accelerates", acceleratesCount, acceleratesSum, true));
         if (earlier > 0) list.appendChild(pbContribRow("Earlier contributions", null, earlier, false));
         potBreakdownBody.appendChild(list);
 
@@ -1266,7 +1839,7 @@
       }
     });
 
-    /* ── Speed-Up handler ──────────────────────────────────────── */
+    /* ── Speed-Up handler ──────────────────────────────────── */
     speedupBtn.addEventListener("click", async () => {
       if (sending) return;
       showError("");
@@ -1298,6 +1871,41 @@
         setSending(false, false);
         console.error("[lastwin] speed-up sendTransaction failed", e);
         showError(describeSendError(e, "Speed-up failed: ", cost));
+      }
+    });
+
+    /* ── Accelerate handler ────────────────────────────────────── */
+    accelerateBtn.addEventListener("click", async () => {
+      if (sending) return;
+      showError("");
+
+      if (!appPubkey) {
+        showError("Game not loaded yet — please wait.");
+        return;
+      }
+
+      const cost = (gameData && gameData.accelerateCost) || 1000;
+      const memo = JSON.stringify({ app: "lastwin", type: "accelerate" });
+      if (memo.length > 1024) {
+        showError("Payload too large.");
+        return;
+      }
+
+      try {
+        setSending(true);
+        const prevPot = gameData ? gameData.potBalance : 0;
+        await window.sendTransaction(appPubkey, cost, memo, { ...TX_SEND_OPTS, confirmTitle: "Accelerate the clock", confirmSubtitle: "Last One Wins — spend " + cost + " to set a fresh 10-minute fuse and take the lead." });
+        setSending(false, true);
+        showError("");
+        for (let i = 0; i < 5; i++) {
+          await pollGameState();
+          if (gameData && gameData.potBalance !== prevPot) break;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (e) {
+        setSending(false, false);
+        console.error("[lastwin] accelerate sendTransaction failed", e);
+        showError(describeSendError(e, "Accelerate failed: ", cost));
       }
     });
 
@@ -1437,6 +2045,50 @@
           }
         });
       }
+
+      // Push notifications — show bell only when server has VAPID keys configured
+      // and the browser supports service workers + PushManager.
+      try {
+        const pushKeyResp = await fetch("/__push/vapid-public-key");
+        if (pushKeyResp.ok) {
+          const { publicKey } = await pushKeyResp.json();
+          if (publicKey && "serviceWorker" in navigator && "PushManager" in window) {
+            pushToggle.style.display = "";
+            pushReg = await navigator.serviceWorker.register("/sw.js");
+            await navigator.serviceWorker.ready;
+            pushSub = await pushReg.pushManager.getSubscription();
+            setBellActive(!!pushSub);
+
+            pushToggle.addEventListener("click", async () => {
+              try {
+                if (pushSub) {
+                  await pushSub.unsubscribe();
+                  await fetch("/__push/subscribe", {
+                    method: "DELETE",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ endpoint: pushSub.endpoint }),
+                  });
+                  pushSub = null;
+                  setBellActive(false);
+                } else {
+                  pushSub = await pushReg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                  });
+                  await fetch("/__push/subscribe", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ subscription: pushSub, address: myAddress || null }),
+                  });
+                  setBellActive(true);
+                }
+              } catch (e) {
+                console.warn("[push] toggle error:", e);
+              }
+            });
+          }
+        }
+      } catch (_) {}
     }
 
     init();

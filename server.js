@@ -31,6 +31,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
+const webPush = require("web-push");
 
 const {
   loadEnvFile,
@@ -42,11 +43,13 @@ const {
   createDappServerStatus,
 } = require("./lib/dapp-server");
 const createLastOneWins = require("./game-logic");
+const pushStore = require("./lib/push-store");
 
 loadEnvFile();
 
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
+const FORCE_MEGA = LOCAL_DEV && process.argv.includes("--force-mega");
 // Staging previews run `node server.js` (no --local-dev) against the chain,
 // so a mock-store seed alone wouldn't populate them. We additionally seed the
 // in-memory game pipeline directly when IS_STAGING. Strict no-op in production.
@@ -58,6 +61,24 @@ const APP_PUBKEY = process.env.APP_PUBKEY || "ut1_lastwin_default_pubkey";
 const APP_SECRET_KEY = process.env.APP_SECRET_KEY || "";
 const NODE_RPC_URL = process.env.NODE_RPC_URL || "http://usernode-node:3000";
 const TIMER_DURATION_MS = parseInt(process.env.TIMER_DURATION_MS, 10) || 14400000;
+
+// ── Push notifications config ─────────────────────────────────────────────────
+// If VAPID_PRIVATE_KEY is absent the feature is silently disabled: the bell is
+// hidden on the client, and sendPush is a no-op in the game logic.
+let pushEnabled = false;
+if (process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webPush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:admin@example.com",
+      process.env.VAPID_PUBLIC_KEY || "",
+      process.env.VAPID_PRIVATE_KEY
+    );
+    pushStore.init(webPush);
+    pushEnabled = true;
+  } catch (e) {
+    console.error("[push] VAPID init failed:", e.message);
+  }
+}
 
 // ── Express app ──────────────────────────────────────────────────────────────
 const app = express();
@@ -86,95 +107,63 @@ const game = createLastOneWins({
   timerDurationMs: TIMER_DURATION_MS,
   localDev: LOCAL_DEV,
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
+  pushStore: pushEnabled ? pushStore : null,
+  forceMega: FORCE_MEGA,
 });
 // game.start() runs the payout timer (checks every 5s for an expired round
 // and triggers /wallet/send when one is found); chain plumbing (recipient +
 // sender pollers, backfill, mock drain) is in gameCache below.
 game.start();
 
-// ── Staging / local-dev seed ─────────────────────────────────────────────────
-// The leaderboard (and Recent Activity) render nothing until rounds have been
-// won, which is hard to reach by clicking around. Seed a deterministic set of
-// fake players and completed rounds so previews show a varied ranking. Strictly
-// gated: never runs in production (LOCAL_DEV false and USERNODE_ENV !==
-// "staging"), so real chain history is replayed untouched there.
-//
-// Builds raw txs (matching the chain shape normalizeTx accepts): set_username
-// memos, then per round an `entry` (to the app) and a `payout` (from the app).
-// Win distribution: demo-alice 3, demo-bob 2, demo-carol 2 (a tie), demo-dave 1,
-// with demo-alice taking the last two rounds so the 🔥 streak marker shows.
-function buildSeedTransactions() {
-  const players = {
-    alice: "ut1stagingdemoalice00000000000000000000000",
-    bob: "ut1stagingdemobob000000000000000000000000",
-    carol: "ut1stagingdemocarol00000000000000000000000",
-    dave: "ut1stagingdemodave000000000000000000000000",
-  };
-  // Round winners in order — uneven totals, a tie, and a closing alice streak.
-  const order = ["dave", "bob", "carol", "alice", "bob", "carol", "alice", "alice"];
-  const txs = [];
-  // Fixed timestamps in the past so the checkPayout TIMER_CHANGE_TS guard
-  // suppresses any seeded round (all are closed anyway — no payout side effect).
-  let ts = Date.now() - 3600000; // 1h ago
-  const step = 30000;            // 30s between events
-  const memo = (o) => JSON.stringify(o);
-
-  for (const [handle, addr] of Object.entries(players)) {
-    txs.push({
-      id: `seed_username_${handle}`,
-      from_pubkey: addr,
-      destination_pubkey: APP_PUBKEY,
-      amount: 0,
-      memo: memo({ app: "lastwin", type: "set_username", username: `demo-${handle}` }),
-      created_at: new Date(ts).toISOString(),
-    });
-    ts += step;
+// ── Staging / local-dev demo seed ────────────────────────────────────────────
+// Seeds demo txs so the leaderboard shows varied rankings and the accelerate UI
+// path (Recent Activity row + Pot Breakdown line) is verifiable without waiting
+// for live chain activity. Injected via processTransaction — same path as real
+// txs — so dedup and round logic apply. Strict no-op in production.
+function seedDemoTransactions() {
+  if (!(LOCAL_DEV || IS_STAGING)) return;
+  const now = Date.now();
+  const ALICE = "ut1stagingdemoalice00000000000000000000000";
+  const BOB   = "ut1stagingdemobob000000000000000000000000";
+  const CAROL = "ut1stagingdemocarol00000000000000000000000";
+  const DAVE  = "ut1stagingdemodave000000000000000000000000";
+  const memo = (obj) => JSON.stringify(obj);
+  const txs = [
+    // Display names for demo players.
+    { id: "seed_name_alice", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoAlice" }) },
+    { id: "seed_name_bob",   from_pubkey: BOB,   destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoBob" }) },
+    { id: "seed_name_carol", from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoCarol" }) },
+    { id: "seed_name_dave",  from_pubkey: DAVE,  destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoDave" }) },
+    // Completed rounds: dave(1), bob(2 via accelerate), carol(3), alice(4),
+    //   bob(5), carol(6), alice(7), alice(8) — alice 2-win streak on rounds 7-8.
+    { id: "seed_r1_entry",  from_pubkey: DAVE,  destination_pubkey: APP_PUBKEY, amount: 50,  timestamp_ms: now - 3600000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r1_payout", from_pubkey: APP_PUBKEY, destination_pubkey: DAVE,  amount: 50,  timestamp_ms: now - 3540000, memo: memo({ app: "lastwin", type: "payout", round: 1, winner: DAVE }) },
+    { id: "seed_r2_entry",  from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 50,  timestamp_ms: now - 3480000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r2_accel",  from_pubkey: BOB,   destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now - 3440000, memo: memo({ app: "lastwin", type: "accelerate" }) },
+    { id: "seed_r2_payout", from_pubkey: APP_PUBKEY, destination_pubkey: BOB,   amount: 1050, timestamp_ms: now - 3400000, memo: memo({ app: "lastwin", type: "payout", round: 2, winner: BOB }) },
+    { id: "seed_r3_entry",  from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 70,  timestamp_ms: now - 3360000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r3_payout", from_pubkey: APP_PUBKEY, destination_pubkey: CAROL, amount: 70,  timestamp_ms: now - 3300000, memo: memo({ app: "lastwin", type: "payout", round: 3, winner: CAROL }) },
+    { id: "seed_r4_entry",  from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 80,  timestamp_ms: now - 3240000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r4_payout", from_pubkey: APP_PUBKEY, destination_pubkey: ALICE, amount: 80,  timestamp_ms: now - 3180000, memo: memo({ app: "lastwin", type: "payout", round: 4, winner: ALICE }) },
+    { id: "seed_r5_entry",  from_pubkey: BOB,   destination_pubkey: APP_PUBKEY, amount: 90,  timestamp_ms: now - 3120000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r5_payout", from_pubkey: APP_PUBKEY, destination_pubkey: BOB,   amount: 90,  timestamp_ms: now - 3060000, memo: memo({ app: "lastwin", type: "payout", round: 5, winner: BOB }) },
+    { id: "seed_r6_entry",  from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 100, timestamp_ms: now - 3000000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r6_payout", from_pubkey: APP_PUBKEY, destination_pubkey: CAROL, amount: 100, timestamp_ms: now - 2940000, memo: memo({ app: "lastwin", type: "payout", round: 6, winner: CAROL }) },
+    { id: "seed_r7_entry",  from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 110, timestamp_ms: now - 2880000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r7_payout", from_pubkey: APP_PUBKEY, destination_pubkey: ALICE, amount: 110, timestamp_ms: now - 2820000, memo: memo({ app: "lastwin", type: "payout", round: 7, winner: ALICE }) },
+    { id: "seed_r8_entry",  from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 120, timestamp_ms: now - 2760000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r8_payout", from_pubkey: APP_PUBKEY, destination_pubkey: ALICE, amount: 120, timestamp_ms: now - 2700000, memo: memo({ app: "lastwin", type: "payout", round: 8, winner: ALICE }) },
+    // Active round: carol entry then alice accelerates to take the lead.
+    { id: "seed_r9_entry",  from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 80,   timestamp_ms: now - 60000, memo: memo({ app: "lastwin", type: "entry" }) },
+    { id: "seed_r9_accel",  from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now,          memo: memo({ app: "lastwin", type: "accelerate" }) },
+  ];
+  for (const tx of txs) {
+    if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
+    game.processTransaction(tx);
   }
-
-  order.forEach((handle, i) => {
-    const round = i + 1;
-    const winner = players[handle];
-    const amount = 50 + i * 10; // varied pots: 50, 60, 70, …
-    // Entry from the winner (grows the pot, sets last sender for the round).
-    txs.push({
-      id: `seed_entry_${round}`,
-      from_pubkey: winner,
-      destination_pubkey: APP_PUBKEY,
-      amount,
-      memo: memo({ app: "lastwin", type: "entry" }),
-      created_at: new Date(ts).toISOString(),
-    });
-    ts += step;
-    // Payout from the app to the winner (advances the round, tallies the win).
-    txs.push({
-      id: `seed_payout_${round}`,
-      from_pubkey: APP_PUBKEY,
-      destination_pubkey: winner,
-      amount,
-      memo: memo({ app: "lastwin", type: "payout", round, winner }),
-      created_at: new Date(ts).toISOString(),
-    });
-    ts += step;
-  });
-
-  return txs;
+  console.log(`[seed] injected ${txs.length} demo txs (${LOCAL_DEV ? "local-dev" : "staging"}) — leaderboard + accelerate rows`);
 }
-
-if (LOCAL_DEV || IS_STAGING) {
-  const seed = buildSeedTransactions();
-  if (LOCAL_DEV) {
-    // Mock mode: hand the txs to the mock store; the caches' mock drain replays
-    // them through processTransaction (and the global usernames cache too).
-    for (const tx of seed) mockApi.transactions.push(tx);
-    console.log(`[seed] local-dev: queued ${seed.length} mock seed txs`);
-  } else {
-    // Staging: the live chain pollers won't carry our fake txs, so feed the
-    // game pipeline directly. The global usernames cache is bypassed, but the
-    // game's own usernames map (exposed via /__game/state) backs the names.
-    for (const tx of seed) game.processTransaction(tx);
-    console.log(`[seed] staging: injected ${seed.length} seed txs into game state`);
-  }
-}
+seedDemoTransactions();
 
 const gameCache = createAppStateCache({
   name: "lastwin",
@@ -305,6 +294,33 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Push notification routes ──────────────────────────────────────────────────
+// Lastwin is a public app (no JWT middleware), so these routes are reachable by
+// any visitor. express.json() is scoped to this router only.
+const pushRouter = express.Router();
+pushRouter.use(express.json());
+
+pushRouter.get("/vapid-public-key", (_req, res) => {
+  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+pushRouter.post("/subscribe", (req, res) => {
+  const { subscription, address } = req.body || {};
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: "Invalid subscription" });
+  }
+  pushStore.subscribe(subscription.endpoint, subscription, address || null);
+  res.json({ ok: true });
+});
+
+pushRouter.delete("/subscribe", (req, res) => {
+  const { endpoint } = req.body || {};
+  if (endpoint) pushStore.unsubscribe(endpoint);
+  res.json({ ok: true });
+});
+
+app.use("/__push", pushRouter);
+
 // ── Static assets ────────────────────────────────────────────────────────────
 // usernode-bridge.js, usernode-usernames.js, usernode-loading.js, and any
 // future CSS/images. These are always served — they're public infrastructure,
@@ -370,5 +386,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Node RPC:      ${NODE_RPC_URL}`);
   console.log(`  Timer:         ${timerMinutes} minutes`);
   console.log(`  Mode:          ${LOCAL_DEV ? "LOCAL DEV (mock API)" : "production (chain pollers running, public access)"}`);
-  console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}\n`);
+  console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}`);
+  console.log(`  Push:          ${pushEnabled ? "enabled" : "disabled (no VAPID keys)"}\n`);
 });

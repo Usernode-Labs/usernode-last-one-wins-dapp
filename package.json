@@ -9,6 +9,7 @@
     "dev": "node server.js --local-dev"
   },
   "dependencies": {
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "web-push": "^3.6.7"
   }
 }
