@@ -681,6 +681,9 @@
       font-weight: 700;
       background: var(--gold-dim);
     }
+    .participants-label { font-size: var(--text-sm); color: var(--muted); margin-top: var(--space-1); min-height: 18px; }
+    .odds-line { font-size: var(--text-sm); color: var(--muted); margin-top: var(--space-1); min-height: 18px; }
+    .odds-line .odds-detail { font-size: var(--text-xs); opacity: 0.75; }
 
     /* ── Streak banner ──────────────────────────────────────── */
     .streak-banner {
@@ -741,6 +744,35 @@
     }
     .lb-row.self { border-color: var(--accent); background: rgba(110,168,254,0.08); }
     .lb-row.self .lb-name { color: var(--accent); }
+
+    hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+
+    /* ── New-entry flash ──────────────────────────────────── */
+    @keyframes entryHighlight {
+      from { background: rgba(110, 168, 254, 0.25); }
+      to   { background: transparent; }
+    }
+    .entry-item.entry-new { animation: entryHighlight 0.5s ease-out forwards; }
+    @media (prefers-reduced-motion: reduce) {
+      .entry-item.entry-new { animation: none; }
+    }
+
+    /* ── Winner history ──────────────────────────────────────── */
+    .winner-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px var(--space-3);
+      border-radius: 10px;
+      font-size: var(--text-sm);
+      border: 1px solid var(--border);
+      background: var(--card);
+      min-height: 44px;
+    }
+    .winner-item .winner-from { color: var(--fg); font-size: var(--text-sm); font-weight: 500; }
+    .winner-item .winner-round { color: var(--muted); font-size: var(--text-xs); }
+    .winner-item .winner-amount { font-weight: 700; white-space: nowrap; color: var(--gold); font-variant-numeric: tabular-nums; }
+    .winner-item .winner-bonus { font-size: var(--text-xs); color: var(--gold); font-weight: 600; margin-top: 2px; }
 
     /* ── Entry address line ─────────────────────────────────── */
     .entry-addr {
@@ -933,6 +965,7 @@
         <div class="hero-divider"></div>
         <div class="pot" id="potDisplay">0</div>
         <div class="pot-label">Tokens in the Pot</div>
+        <div class="participants-label" id="participantsLabel"></div>
         <div class="personal-status-wrap">
           <div class="personal-status" id="personalStatus"></div>
         </div>
@@ -957,6 +990,12 @@
         <div class="empty-state">No winners yet &mdash; be the first to take a round!</div>
       </div>
 
+    </div>
+
+    <div id="winnerHistory" style="display:none;">
+      <hr />
+      <div class="section-title">Winner History</div>
+      <div class="entry-list" id="winnerList"></div>
     </div>
   </div>
 
@@ -1004,6 +1043,11 @@
     const countdownEl = document.getElementById("countdown");
     const countdownLabel = document.getElementById("countdownLabel");
     const potDisplay = document.getElementById("potDisplay");
+    const heroEl = document.querySelector(".hero");
+    const participantsLabel = document.getElementById("participantsLabel");
+    const oddsLine = document.getElementById("oddsLine");
+    const winnerHistory = document.getElementById("winnerHistory");
+    const winnerList = document.getElementById("winnerList");
     const personalStatusEl = document.getElementById("personalStatus");
     const megaBanner = document.getElementById("megaBanner");
     const streakBanner = document.getElementById("streakBanner");
@@ -1044,6 +1088,10 @@
     let appPubkey = null;
     let myUsername = null;
     let usernameMap = {};
+    // Entry-flash tracking: seenEntryTxIds is seeded on the first poll so the
+    // initial paint doesn't animate the whole list; only new entries flash.
+    const seenEntryTxIds = new Set();
+    let seededEntries = false;
     let pushReg = null;
     let pushSub = null;
     let prevPotBalance = null;
@@ -1403,6 +1451,14 @@
       updateSpeedupBtn();
       updateAccelerateBtn();
 
+      // Participant count (unique entrants this round, server-computed).
+      const pc = gameData.participantCount || 0;
+      if (pc <= 0) {
+        participantsLabel.textContent = gameData.lastSender ? "" : "Be the first to enter!";
+      } else {
+        participantsLabel.textContent = pc + (pc === 1 ? " player this round" : " players this round");
+      }
+
       const isLeading = myAddress && gameData.lastSender === myAddress;
 
       if (!gameData.lastSender) {
@@ -1511,6 +1567,8 @@
           '<div class="empty-state-title">No entries yet</div>' +
           '<div class="empty-state-hint">Be the first to enter — your entry starts the countdown.</div>';
         entryList.appendChild(empty);
+        seededEntries = true;
+        renderWinnerHistory();
         return;
       }
 
@@ -1624,10 +1682,67 @@
 
         el.appendChild(left);
         el.appendChild(amtEl);
+
+        // Entry flash: a row whose tx id is appearing for the first time (and
+        // not on the very first poll) glows briefly. Payout rows don't flash.
+        if (item.type !== "payout" && item.txId) {
+          if (seededEntries && !seenEntryTxIds.has(item.txId)) {
+            el.classList.add("entry-new");
+            setTimeout(() => el.classList.remove("entry-new"), 500);
+          }
+          seenEntryTxIds.add(item.txId);
+        }
+
         entryList.appendChild(el);
         if (buildRoundEntries && expandedRounds.has(item.round)) {
           entryList.appendChild(buildRoundEntries());
         }
+      }
+      // After the first render, future polls may animate genuinely-new entries.
+      seededEntries = true;
+
+      renderWinnerHistory();
+    }
+
+    /* ── Winner history ─────────────────────────────────────── */
+    function renderWinnerHistory() {
+      const rounds = (gameData && gameData.pastRounds) || [];
+      if (rounds.length === 0) {
+        winnerHistory.style.display = "none";
+        winnerList.innerHTML = "";
+        return;
+      }
+      winnerHistory.style.display = "";
+      winnerList.innerHTML = "";
+      for (const r of rounds.slice(0, 10)) {
+        const row = document.createElement("div");
+        row.className = "winner-item";
+
+        const left = document.createElement("div");
+        const who = document.createElement("div");
+        who.className = "winner-from";
+        const isSelf = myAddress && r.winner === myAddress;
+        who.textContent = isSelf ? "You" : displayName(r.winner);
+        if (isSelf) who.style.color = "var(--accent)";
+        const roundLbl = document.createElement("div");
+        roundLbl.className = "winner-round";
+        roundLbl.textContent = "Round " + r.round;
+        left.appendChild(who);
+        left.appendChild(roundLbl);
+        if (r.bonus && r.bonus.amount > 0) {
+          const bonusEl = document.createElement("div");
+          bonusEl.className = "winner-bonus";
+          bonusEl.textContent = "🔥 " + r.bonus.streak + "-win streak +" + r.bonus.amount;
+          left.appendChild(bonusEl);
+        }
+
+        const amt = document.createElement("div");
+        amt.className = "winner-amount";
+        amt.textContent = "+" + (r.amount || 0);
+
+        row.appendChild(left);
+        row.appendChild(amt);
+        winnerList.appendChild(row);
       }
     }
 
