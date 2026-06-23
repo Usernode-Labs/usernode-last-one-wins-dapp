@@ -211,6 +211,8 @@
       flex-shrink: 0;
     }
     .header-icon:hover { border-color: var(--accent); color: var(--accent); }
+    .header-icon.push-active { border-color: var(--gold); color: var(--gold); }
+    .header-icon.push-active:hover { border-color: var(--gold); color: var(--gold); }
     .header-icon:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 
     /* ── Hero card ──────────────────────────────────────────── */
@@ -691,6 +693,14 @@
       text-align: center;
       margin-top: var(--space-2);
     }
+    .mega-banner {
+      font-size: 13px; font-weight: 700;
+      color: var(--gold); margin: 8px 0 4px; text-align: center;
+    }
+    .countdown.countdown-mega {
+      color: var(--gold);
+      text-shadow: 0 0 18px rgba(250, 204, 21, 0.35);
+    }
 
     hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
 
@@ -847,6 +857,7 @@
           <span id="usernameDisplay">...</span>
         </button>
         <button class="header-icon" id="potToggle" type="button" title="Pot breakdown">💰</button>
+        <button class="header-icon" id="pushToggle" type="button" title="Toggle notifications" style="display:none">🔔</button>
         <button class="header-icon" id="infoToggle" type="button" title="How to play">?</button>
       </div>
     </div>
@@ -913,6 +924,7 @@
         <div class="personal-status-wrap">
           <div class="personal-status" id="personalStatus"></div>
         </div>
+        <div class="mega-banner hide" id="megaBanner"></div>
         <div class="streak-banner hide" id="streakBanner"></div>
       </div>
 
@@ -985,6 +997,7 @@
     const winnerHistory = document.getElementById("winnerHistory");
     const winnerList = document.getElementById("winnerList");
     const personalStatusEl = document.getElementById("personalStatus");
+    const megaBanner = document.getElementById("megaBanner");
     const streakBanner = document.getElementById("streakBanner");
     const streakInfoText = document.getElementById("streakInfoText");
     const mechanicLabelEl = document.getElementById("mechanicLabel");
@@ -1012,6 +1025,7 @@
     const potOverlay = document.getElementById("potOverlay");
     const potContent = document.getElementById("potContent");
     const potBreakdownBody = document.getElementById("potBreakdownBody");
+    const pushToggle = document.getElementById("pushToggle");
     const expandedRounds = new Set();
 
     /* ── State ──────────────────────────────────────────────── */
@@ -1025,9 +1039,23 @@
     // initial paint doesn't animate the whole list; only new entries flash.
     const seenEntryTxIds = new Set();
     let seededEntries = false;
+    let pushReg = null;
+    let pushSub = null;
     let prevPotBalance = null;
 
     /* ── Helpers ────────────────────────────────────────────── */
+    function setBellActive(active) {
+      if (!pushToggle) return;
+      pushToggle.classList.toggle("push-active", active);
+    }
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(base64);
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+
     function truncate(s, n) {
       if (!s || s.length <= n) return s || "";
       const h = Math.floor((n - 3) / 2);
@@ -1062,7 +1090,9 @@
     function renderCountdown(ms) {
       countdownEl.textContent = formatCountdown(ms);
       const urgent = ms != null && ms > 0 && ms < URGENT_THRESHOLD_MS;
-      countdownEl.className = urgent ? "countdown urgent" : "countdown";
+      let cls = urgent ? "countdown urgent" : "countdown";
+      if (!urgent && gameData && gameData.isMegaRound) cls += " countdown-mega";
+      countdownEl.className = cls;
     }
 
     function speedupLabel() {
@@ -1093,13 +1123,16 @@
     function wonMessage(winnerAddr, isSelf) {
       const streak = predictWinnerStreak();
       const min = (gameData && gameData.streakBonusMin) || 2;
+      const isMega = gameData && gameData.isMegaRound;
       if (isSelf) {
+        const megaSuffix = isMega ? " 🏆 Mega Round win!" : "";
         return streak >= min
-          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!"
-          : "You won! Payout incoming...";
+          ? "You won! 🔥 " + streak + "-win streak — bonus incoming!" + megaSuffix
+          : "You won! Payout incoming..." + megaSuffix;
       }
       const note = streak >= min ? " 🔥 " + streak + "-win streak!" : "";
-      return displayName(winnerAddr) + " won this round!" + note;
+      const megaNote = isMega ? " 🏆 Mega Round!" : "";
+      return displayName(winnerAddr) + " won this round!" + note + megaNote;
     }
 
     function formatTime(ms) {
@@ -1292,7 +1325,9 @@
         }
       }
 
-      roundLabel.textContent = "Round " + gameData.roundNumber;
+      roundLabel.textContent = gameData.isMegaRound
+        ? "🏆 Mega Round " + gameData.roundNumber
+        : "Round " + gameData.roundNumber;
 
       // Pot: flash on change, then update
       const newPot = gameData.potBalance;
@@ -1301,7 +1336,13 @@
       }
       prevPotBalance = newPot;
       potDisplay.textContent = String(newPot);
-
+      if (gameData.isMegaRound) {
+        megaBanner.textContent = "🏆 Monday Mega Round · " + gameData.megaRoundPot + " tokens guaranteed";
+        megaBanner.classList.remove("hide");
+      } else {
+        megaBanner.textContent = "";
+        megaBanner.classList.add("hide");
+      }
       updateSpeedupBtn();
       updateAccelerateBtn();
 
@@ -2012,6 +2053,50 @@
           }
         });
       }
+
+      // Push notifications — show bell only when server has VAPID keys configured
+      // and the browser supports service workers + PushManager.
+      try {
+        const pushKeyResp = await fetch("/__push/vapid-public-key");
+        if (pushKeyResp.ok) {
+          const { publicKey } = await pushKeyResp.json();
+          if (publicKey && "serviceWorker" in navigator && "PushManager" in window) {
+            pushToggle.style.display = "";
+            pushReg = await navigator.serviceWorker.register("/sw.js");
+            await navigator.serviceWorker.ready;
+            pushSub = await pushReg.pushManager.getSubscription();
+            setBellActive(!!pushSub);
+
+            pushToggle.addEventListener("click", async () => {
+              try {
+                if (pushSub) {
+                  await pushSub.unsubscribe();
+                  await fetch("/__push/subscribe", {
+                    method: "DELETE",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ endpoint: pushSub.endpoint }),
+                  });
+                  pushSub = null;
+                  setBellActive(false);
+                } else {
+                  pushSub = await pushReg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                  });
+                  await fetch("/__push/subscribe", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ subscription: pushSub, address: myAddress || null }),
+                  });
+                  setBellActive(true);
+                }
+              } catch (e) {
+                console.warn("[push] toggle error:", e);
+              }
+            });
+          }
+        }
+      } catch (_) {}
     }
 
     init();

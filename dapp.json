@@ -24,6 +24,36 @@
       "description": "Countdown duration in milliseconds before the last sender is declared the winner. Defaults to 4h. Ignored in --local-dev (uses a fixed 2-minute timer).",
       "required": false,
       "default": "14400000"
+    },
+    {
+      "key": "VAPID_PUBLIC_KEY",
+      "description": "VAPID public key for browser push notifications (urlsafe-base64). Generate with: npx web-push generate-vapid-keys --urlsafe-base64. Leave unset to disable push notifications.",
+      "required": false
+    },
+    {
+      "key": "VAPID_PRIVATE_KEY",
+      "description": "VAPID private key for browser push notifications (urlsafe-base64). Generate with: npx web-push generate-vapid-keys --urlsafe-base64. Must be paired with VAPID_PUBLIC_KEY.",
+      "required": false,
+      "private": true,
+      "staging_default": ""
+    },
+    {
+      "key": "VAPID_SUBJECT",
+      "description": "Contact string for VAPID push authentication. Must be a mailto: address or https:// URL.",
+      "required": false,
+      "default": "https://social-vibecoding.usernodelabs.org"
+    },
+    {
+      "key": "MEGA_ROUND_ENABLED",
+      "description": "Set to \"false\" to disable Monday Mega Rounds without a code change. Defaults to enabled.",
+      "required": false,
+      "default": "true"
+    },
+    {
+      "key": "MEGA_ROUND_POT",
+      "description": "Treasury seed amount in tokens credited to the pot at the start of each Monday Mega Round.",
+      "required": false,
+      "default": "1000"
     }
   ]
 }
