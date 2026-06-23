@@ -162,6 +162,10 @@ function createLastOneWins(opts) {
     return {
       roundNumber: state.roundNumber,
       potBalance: state.potBalance,
+      // Unique wallet addresses that have entered the current round (entries +
+      // speed-ups). Derived from the full live entries array, not the 50-entry
+      // UI slice below, so it stays accurate in very active rounds.
+      participantCount: new Set(state.entries.map((e) => e.from)).size,
       lastSender: state.lastSender,
       lastEntryTs: state.lastEntryTs,
       timerDurationMs: getTimerDuration(),

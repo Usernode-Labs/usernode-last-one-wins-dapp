@@ -113,42 +113,85 @@ const game = createLastOneWins({
 game.start();
 
 // ── Staging / local-dev demo seed ────────────────────────────────────────────
-// The Accelerate (and Speed-up) UI is data-driven: the Recent Activity feed and
-// Pot Breakdown only show their accelerate rows once an accelerate tx exists.
-// Staging starts from a copy of prod but has no guaranteed live round, and
-// --local-dev starts with an empty mock store, so we inject obviously-fake
-// "Staging demo" transactions through processTransaction (which is exactly how
-// real/mock chain txs reach the game) to make the new UI verifiable. This only
-// mutates in-memory game state — it never sends a real /wallet/send (payouts
-// fire from checkPayout, not from ingesting a payout tx), and it's a strict
-// no-op in production. Seeding is idempotent: processTransaction dedups by tx id.
-function seedDemoTransactions() {
-  if (!(LOCAL_DEV || IS_STAGING)) return;
+// Seeds obviously-fake demo transactions so the full UI surface is testable
+// without live on-chain activity. Covers: participant-count, winner-history,
+// odds, animation, streak bonuses, and accelerate rows. Strictly a no-op in
+// production. Seeding is idempotent: processTransaction dedups by tx id.
+function buildDemoSeed(potPubkey) {
+  const A = "ut1_demo_alice_0000000000000000aaaaaa";
+  const B = "ut1_demo_bob_00000000000000000000bbbbbb";
+  const C = "ut1_demo_carol_000000000000000000cccccc";
+  const APP = "lastwin";
   const now = Date.now();
-  const ALICE = "ut1_staging_demo_alice";
-  const BOB = "ut1_staging_demo_bob";
-  const CAROL = "ut1_staging_demo_carol";
-  const memo = (obj) => JSON.stringify(obj);
-  const txs = [
-    // Friendly display names for the demo players.
-    { id: "seed_name_alice", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoAlice" }) },
-    { id: "seed_name_bob", from_pubkey: BOB, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoBob" }) },
-    { id: "seed_name_carol", from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 1, timestamp_ms: now - 3700000, memo: memo({ app: "lastwin", type: "set_username", username: "StagingDemoCarol" }) },
-    // Completed past round: an entry, an accelerate that takes the lead, payout.
-    { id: "seed_r1_entry", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 50, timestamp_ms: now - 3600000, memo: memo({ app: "lastwin", type: "entry" }) },
-    { id: "seed_r1_accel", from_pubkey: BOB, destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now - 3540000, memo: memo({ app: "lastwin", type: "accelerate" }) },
-    { id: "seed_r1_payout", from_pubkey: APP_PUBKEY, destination_pubkey: BOB, amount: 1050, timestamp_ms: now - 3480000, memo: memo({ app: "lastwin", type: "payout", round: 1, winner: BOB }) },
-    // Active round: an entry, then an accelerate that takes the lead now.
-    { id: "seed_r2_entry", from_pubkey: CAROL, destination_pubkey: APP_PUBKEY, amount: 80, timestamp_ms: now - 60000, memo: memo({ app: "lastwin", type: "entry" }) },
-    { id: "seed_r2_accel", from_pubkey: ALICE, destination_pubkey: APP_PUBKEY, amount: 1000, timestamp_ms: now, memo: memo({ app: "lastwin", type: "accelerate" }) },
-  ];
-  for (const tx of txs) {
+  let seq = 0;
+  const txs = [];
+  const iso = (ms) => new Date(ms).toISOString();
+  const id = (tag) => `demo_${tag}_${seq++}`;
+
+  const setName = (from, username, ms) => txs.push({
+    id: id("name"), from_pubkey: from, destination_pubkey: potPubkey, amount: 0,
+    memo: JSON.stringify({ app: APP, type: "set_username", username }), created_at: iso(ms),
+  });
+  const entry = (from, amount, ms) => txs.push({
+    id: id("entry"), from_pubkey: from, destination_pubkey: potPubkey, amount,
+    memo: JSON.stringify({ app: APP, type: "entry" }), created_at: iso(ms),
+  });
+  const accelerate = (from, ms) => txs.push({
+    id: id("accel"), from_pubkey: from, destination_pubkey: potPubkey, amount: 1000,
+    memo: JSON.stringify({ app: APP, type: "accelerate" }), created_at: iso(ms),
+  });
+  const payout = (winner, amount, round, ms) => txs.push({
+    id: id("payout"), from_pubkey: potPubkey, destination_pubkey: winner, amount,
+    memo: JSON.stringify({ app: APP, type: "payout", round, winner }), created_at: iso(ms),
+  });
+  const bonus = (winner, amount, round, streak, ms) => txs.push({
+    id: id("bonus"), from_pubkey: potPubkey, destination_pubkey: winner, amount,
+    memo: JSON.stringify({ app: APP, type: "bonus", round, winner, streak, amount }), created_at: iso(ms),
+  });
+
+  const H = 3600000;
+  // Display names (obviously fake demo accounts).
+  setName(A, "demo-alice", now - 4 * H);
+  setName(B, "demo-bob", now - 4 * H + 1000);
+  setName(C, "demo-carol", now - 4 * H + 2000);
+
+  // Round 1 — carol wins.
+  entry(A, 10, now - 3 * H);
+  entry(B, 20, now - 3 * H + 60000);
+  entry(C, 15, now - 3 * H + 120000);
+  payout(C, 45, 1, now - 3 * H + 180000);
+
+  // Round 2 — alice wins.
+  entry(B, 30, now - 2 * H);
+  entry(A, 25, now - 2 * H + 60000);
+  payout(A, 55, 2, now - 2 * H + 120000);
+
+  // Round 3 — alice wins again (consecutive → 2-win streak bonus).
+  entry(C, 40, now - 1 * H);
+  entry(A, 60, now - 1 * H + 60000);
+  payout(A, 100, 3, now - 1 * H + 120000);
+  bonus(A, 10, 3, 2, now - 1 * H + 121000);
+
+  // Round 4 — current, live. alice leads via accelerate. 3 participants.
+  entry(A, 50, now - 300000);
+  entry(B, 30, now - 240000);
+  entry(C, 40, now - 180000);
+  entry(A, 20, now - 120000);
+  entry(B, 15, now - 60000);
+  entry(A, 10, now - 10000);
+  accelerate(A, now - 5000);
+
+  return txs;
+}
+
+if (IS_STAGING || LOCAL_DEV) {
+  const seed = buildDemoSeed(APP_PUBKEY);
+  for (const tx of seed) {
     if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
     game.processTransaction(tx);
   }
-  console.log(`[seed] injected ${txs.length} demo txs (${LOCAL_DEV ? "local-dev" : "staging"}) — incl. accelerate rows`);
+  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"}) — incl. streak bonus and accelerate rows`);
 }
-seedDemoTransactions();
 
 const gameCache = createAppStateCache({
   name: "lastwin",
