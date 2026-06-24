@@ -96,6 +96,9 @@ function createLastOneWins(opts) {
     // Win streaks (derived from the ordered payout sequence, not persisted).
     streaks: new Map(),   // pubkey → { count, lastWonRound }
     currentStreak: null,  // { winner, count, lastRound } or null before any payout
+    // Total wins per player (derived from the payout sequence, not persisted).
+    // Powers the leaderboard. pubkey → { wins, lastWonRound, lastWonTs }.
+    winCounts: new Map(),
   };
 
   // pubkey → { name, ts } — latest set_username per sender wins
@@ -155,6 +158,25 @@ function createLastOneWins(opts) {
     return count;
   }
 
+  // Tally a confirmed win for the leaderboard. Called from the same guarded
+  // payout branch as applyStreak, so each advancing round counts exactly once
+  // (seenTxIds dedups txs; the round >= roundNumber guard dedups replays).
+  function applyWin(winner, round, ts) {
+    const prev = state.winCounts.get(winner);
+    const wins = (prev ? prev.wins : 0) + 1;
+    state.winCounts.set(winner, { wins, lastWonRound: round, lastWonTs: ts });
+  }
+
+  // Ranked top-N players by total wins (desc), tie-broken by most-recent win.
+  function getLeaderboard(limit) {
+    const rows = [];
+    for (const [pubkey, v] of state.winCounts) {
+      rows.push({ pubkey, name: resolveUsername(pubkey), wins: v.wins, lastWonTs: v.lastWonTs });
+    }
+    rows.sort((a, b) => b.wins - a.wins || (b.lastWonTs || 0) - (a.lastWonTs || 0));
+    return rows.slice(0, limit).map((r) => ({ pubkey: r.pubkey, name: r.name, wins: r.wins }));
+  }
+
   function getStateResponse() {
     const usernameMap = {};
     for (const [addr, v] of usernames) usernameMap[addr] = v.name;
@@ -183,6 +205,7 @@ function createLastOneWins(opts) {
         winnerName: resolveUsername(state.currentStreak.winner),
         count: state.currentStreak.count,
       } : null,
+      leaderboard: getLeaderboard(10),
       entries: state.entries.slice(-50).reverse(),
       pastRounds: state.pastRounds.slice(-20).reverse(),
       payoutInProgress: state.payoutInProgress,
@@ -301,6 +324,8 @@ function createLastOneWins(opts) {
         // Update the streak before advancing — guarded by the same check so
         // replayed/duplicate payouts don't double-count (seenTxIds also dedups).
         applyStreak(winner, round);
+        // Tally the win for the leaderboard under the same guard.
+        applyWin(winner, round, tx.ts);
         state.roundNumber = round + 1;
         state.potBalance = 0;
         state.lastSender = null;
@@ -656,6 +681,7 @@ function createLastOneWins(opts) {
     state.megaSeedSent = false;
     state.streaks.clear();
     state.currentStreak = null;
+    state.winCounts.clear();
     signerConfigured = false;
     console.log("[game] state reset (chain restart detected)");
   }

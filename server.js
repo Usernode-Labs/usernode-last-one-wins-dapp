@@ -50,6 +50,9 @@ loadEnvFile();
 // ── CLI flags ────────────────────────────────────────────────────────────────
 const LOCAL_DEV = process.argv.includes("--local-dev");
 const FORCE_MEGA = LOCAL_DEV && process.argv.includes("--force-mega");
+// Staging previews run `node server.js` (no --local-dev) against the chain,
+// so a mock-store seed alone wouldn't populate them. We additionally seed the
+// in-memory game pipeline directly when IS_STAGING. Strict no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === "staging";
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
@@ -114,13 +117,15 @@ game.start();
 
 // ── Staging / local-dev demo seed ────────────────────────────────────────────
 // Seeds obviously-fake demo transactions so the full UI surface is testable
-// without live on-chain activity. Covers: participant-count, winner-history,
-// odds, animation, streak bonuses, and accelerate rows. Strictly a no-op in
-// production. Seeding is idempotent: processTransaction dedups by tx id.
+// without live on-chain activity. Covers: participant-count, leaderboard
+// rankings, winner-history, odds, animation, streak bonuses, and accelerate
+// rows. Strictly a no-op in production. Seeding is idempotent: processTransaction
+// dedups by tx id.
 function buildDemoSeed(potPubkey) {
   const A = "ut1_demo_alice_0000000000000000aaaaaa";
   const B = "ut1_demo_bob_00000000000000000000bbbbbb";
   const C = "ut1_demo_carol_000000000000000000cccccc";
+  const D = "ut1_demo_dave_0000000000000000dddddddd";
   const APP = "lastwin";
   const now = Date.now();
   let seq = 0;
@@ -151,31 +156,38 @@ function buildDemoSeed(potPubkey) {
 
   const H = 3600000;
   // Display names (obviously fake demo accounts).
-  setName(A, "demo-alice", now - 4 * H);
-  setName(B, "demo-bob", now - 4 * H + 1000);
-  setName(C, "demo-carol", now - 4 * H + 2000);
+  setName(A, "demo-alice", now - 5 * H);
+  setName(B, "demo-bob",   now - 5 * H + 1000);
+  setName(C, "demo-carol", now - 5 * H + 2000);
+  setName(D, "demo-dave",  now - 5 * H + 3000);
 
-  // Round 1 — carol wins.
-  entry(A, 10, now - 3 * H);
-  entry(B, 20, now - 3 * H + 60000);
-  entry(C, 15, now - 3 * H + 120000);
-  payout(C, 45, 1, now - 3 * H + 180000);
+  // Round 1 — dave wins. (dave: 1)
+  entry(B, 10, now - 4 * H);
+  entry(C, 15, now - 4 * H + 60000);
+  entry(D, 20, now - 4 * H + 120000);
+  payout(D, 45, 1, now - 4 * H + 180000);
 
-  // Round 2 — alice wins.
-  entry(B, 30, now - 2 * H);
-  entry(A, 25, now - 2 * H + 60000);
-  payout(A, 55, 2, now - 2 * H + 120000);
+  // Round 2 — bob wins. (bob: 1, dave: 1)
+  entry(A, 25, now - 3 * H);
+  entry(C, 15, now - 3 * H + 60000);
+  entry(B, 30, now - 3 * H + 120000);
+  payout(B, 70, 2, now - 3 * H + 180000);
 
-  // Round 3 — alice wins again (consecutive → 2-win streak bonus).
-  entry(C, 40, now - 1 * H);
+  // Round 3 — alice wins. (alice: 1, bob: 1, dave: 1)
+  entry(C, 20, now - 2 * H);
+  entry(A, 35, now - 2 * H + 60000);
+  payout(A, 55, 3, now - 2 * H + 120000);
+
+  // Round 4 — alice wins again (consecutive → 2-win streak bonus). (alice: 2)
+  entry(B, 40, now - 1 * H);
+  entry(D, 25, now - 1 * H + 30000);
   entry(A, 60, now - 1 * H + 60000);
-  payout(A, 100, 3, now - 1 * H + 120000);
-  bonus(A, 10, 3, 2, now - 1 * H + 121000);
+  payout(A, 125, 4, now - 1 * H + 120000);
+  bonus(A, 12, 4, 2, now - 1 * H + 121000);
 
-  // Round 4 — current, live. alice leads via accelerate. 3 participants.
-  entry(A, 50, now - 300000);
+  // Round 5 — current, live. carol and bob enter, then alice accelerates to take the lead.
+  entry(C, 40, now - 300000);
   entry(B, 30, now - 240000);
-  entry(C, 40, now - 180000);
   entry(A, 20, now - 120000);
   entry(B, 15, now - 60000);
   entry(A, 10, now - 10000);
@@ -190,7 +202,7 @@ if (IS_STAGING || LOCAL_DEV) {
     if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
     game.processTransaction(tx);
   }
-  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"}) — incl. streak bonus and accelerate rows`);
+  console.log(`[seed] injected ${seed.length} demo transactions (${IS_STAGING ? "staging" : "local-dev"}) — incl. leaderboard rankings, streak bonus and accelerate rows`);
 }
 
 const gameCache = createAppStateCache({
