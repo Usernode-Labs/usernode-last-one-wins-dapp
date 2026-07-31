@@ -89,6 +89,11 @@ app.set("trust proxy", 1);
 // Health check — used by Docker healthcheck and platform polling.
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
+// Favicon — browsers request this on every page load. There's no icon file in
+// public/, so without this the request falls through to the HTML shell
+// catch-all and logs a console error. 204 keeps the console clean.
+app.get("/favicon.ico", (_req, res) => res.status(204).end());
+
 // ── Mock API (only --local-dev) ──────────────────────────────────────────────
 const mockApi = createMockApi({ localDev: LOCAL_DEV });
 app.use((req, res, next) => {
