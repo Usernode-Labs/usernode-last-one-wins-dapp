@@ -55,5 +55,9 @@
       "required": false,
       "default": "1000"
     }
-  ]
+  ],
+  "icon": {
+    "image": "brand/icon.png",
+    "emoji": "👑"
+  }
 }
