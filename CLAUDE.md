@@ -191,8 +191,13 @@ sidecar usernode build that exposes those endpoints.
   snapshot (first start, or a chain-id mismatch) the game rebuilds from the
   chain as before and then saves. If the store can't be read at boot, saving
   stays off for that run so a short rebuild never overwrites a good snapshot.
-  Off in `--local-dev` (no `DATABASE_URL`). The `staging:private` table
-  comment keeps staging previews on their own empty copy.
+  The persistence step (and every pg connect/query) is bounded: the pool uses
+  `connectionTimeoutMillis`/`query_timeout`, and `boot()` races the step
+  against an 8s budget, because `gameCache.start()` (the dapp-loading
+  overlay's stream gate) is serialized behind it — a stalled database must
+  never hold the page loader up. Off in `--local-dev` (no `DATABASE_URL`). The
+  `staging:private` table comment keeps staging previews on their own empty
+  copy.
 
 ## Parallel deploys + same APP_PUBKEY
 

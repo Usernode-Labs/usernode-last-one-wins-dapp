@@ -231,6 +231,45 @@ const gameCache = createAppStateCache({
 // gameCache.start() (backfill + live pollers) runs in boot() below, after the
 // saved snapshot has been restored, so restored seenTxIds make the backfill
 // skip everything already applied.
+//
+// That ordering makes the page-load gate (the cache's stream readiness,
+// which the dapp-loading overlay waits on) depend on the persistence step
+// finishing, so the whole step is raced against a hard budget below: a
+// stalled or wedged database can delay boot by at most that budget and
+// never blocks the game from starting (persistence just stays off for the
+// run, the same as a failed load).
+const PERSISTENCE_BOOT_BUDGET_MS = 8000;
+let persistenceGiveUp = false; // set when the budget lapses mid-step
+
+async function restoreFromStore() {
+  await gameStore.init(APP_PUBKEY);
+  const saved = await gameStore.load(APP_PUBKEY);
+  if (persistenceGiveUp) return; // budget lapsed mid-load: stay persistence-off
+  // Load succeeded (row or no row) — safe to save from now on. A load
+  // failure leaves persistence off for this run so a short chain
+  // rebuild can never overwrite a good snapshot.
+  persistenceOn = true;
+  if (saved && saved.data) {
+    // Compare chain ids so a fresh chain starts over instead of
+    // resuming a snapshot from the old one. Discovery failure keeps
+    // the snapshot (same behaviour as a same-id match).
+    const info = await Promise.race([
+      discoverChainInfo({}),
+      new Promise((resolve) => setTimeout(() => resolve({ chainId: null }), 5000)),
+    ]);
+    if (persistenceGiveUp) return; // never restore late — backfill may have started
+    const currentChainId = info && info.chainId;
+    if (currentChainId && saved.chainId && currentChainId !== saved.chainId) {
+      console.log(`[lastwin] saved state is from chain ${String(saved.chainId).slice(0, 16)}…, current is ${String(currentChainId).slice(0, 16)}…: rebuilding`);
+      gameStore.setChainId(currentChainId);
+    } else if (game.restoreSnapshot(saved.data)) {
+      gameStore.setChainId(currentChainId || saved.chainId);
+    } else {
+      console.log("[lastwin] saved state has an unknown format — rebuilding from chain");
+      gameStore.setChainId(currentChainId || saved.chainId);
+    }
+  }
+}
 
 async function boot() {
   // 1. Restore the last saved snapshot (issue #19): updates/restarts used to
@@ -239,35 +278,21 @@ async function boot() {
   if (LOCAL_DEV || !gameStore.isConfigured()) {
     console.log(`[lastwin] state persistence off (${LOCAL_DEV ? "local-dev" : "no DATABASE_URL"})`);
   } else {
-    try {
-      await gameStore.init(APP_PUBKEY);
-      const saved = await gameStore.load(APP_PUBKEY);
-      // Load succeeded (row or no row) — safe to save from now on. A load
-      // failure leaves persistence off for this run so a short chain
-      // rebuild can never overwrite a good snapshot.
-      persistenceOn = true;
-      if (saved && saved.data) {
-        // Compare chain ids so a fresh chain starts over instead of
-        // resuming a snapshot from the old one. Discovery failure keeps
-        // the snapshot (same behaviour as a same-id match).
-        const info = await Promise.race([
-          discoverChainInfo({}),
-          new Promise((resolve) => setTimeout(() => resolve({ chainId: null }), 5000)),
-        ]);
-        const currentChainId = info && info.chainId;
-        if (currentChainId && saved.chainId && currentChainId !== saved.chainId) {
-          console.log(`[lastwin] saved state is from chain ${String(saved.chainId).slice(0, 16)}…, current is ${String(currentChainId).slice(0, 16)}…: rebuilding`);
-          gameStore.setChainId(currentChainId);
-        } else if (game.restoreSnapshot(saved.data)) {
-          gameStore.setChainId(currentChainId || saved.chainId);
-        } else {
-          console.log("[lastwin] saved state has an unknown format — rebuilding from chain");
-          gameStore.setChainId(currentChainId || saved.chainId);
-        }
-      }
-    } catch (e) {
-      console.error("[lastwin] state persistence init failed — saving disabled this run:", e.message);
+    const result = await Promise.race([
+      restoreFromStore().then(
+        () => "done",
+        (e) => {
+          console.error("[lastwin] state persistence init failed — saving disabled this run:", e.message);
+          persistenceOn = false;
+          return "done";
+        },
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), PERSISTENCE_BOOT_BUDGET_MS)),
+    ]);
+    if (result === "timeout") {
+      persistenceGiveUp = true;
       persistenceOn = false;
+      console.error(`[lastwin] state persistence step exceeded ${PERSISTENCE_BOOT_BUDGET_MS / 1000}s — saving disabled this run, starting from the chain`);
     }
   }
 
