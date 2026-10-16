@@ -41,9 +41,11 @@ const {
   createUsernamesCache,
   createNodeStatusProbe,
   createDappServerStatus,
+  discoverChainInfo,
 } = require("./lib/dapp-server");
 const createLastOneWins = require("./game-logic");
 const pushStore = require("./lib/push-store");
+const gameStore = require("./lib/game-store");
 
 loadEnvFile();
 
@@ -100,6 +102,11 @@ app.use((req, res, next) => {
 // Game state is a global, read-only summary of the current round. Per
 // conventions, GET routes that don't live under /api/ are public; the data
 // here is the same for every viewer, so that's fine.
+//
+// Every state change schedules a snapshot save (see lib/game-store.js and
+// "State persistence" in CLAUDE.md) so an update/restart continues from the
+// same round, streaks and history instead of rebuilding from the chain.
+let persistenceOn = false; // flipped on only after a successful store load
 const game = createLastOneWins({
   appPubkey: APP_PUBKEY,
   appSecretKey: APP_SECRET_KEY,
@@ -109,11 +116,10 @@ const game = createLastOneWins({
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
   pushStore: pushEnabled ? pushStore : null,
   forceMega: FORCE_MEGA,
+  onStateChange: () => {
+    if (persistenceOn) gameStore.scheduleSave(() => game.exportSnapshot());
+  },
 });
-// game.start() runs the payout timer (checks every 5s for an expired round
-// and triggers /wallet/send when one is found); chain plumbing (recipient +
-// sender pollers, backfill, mock drain) is in gameCache below.
-game.start();
 
 // ── Staging / local-dev demo seed ────────────────────────────────────────────
 // Seeds obviously-fake demo transactions so the full UI surface is testable
@@ -196,7 +202,7 @@ function buildDemoSeed(potPubkey) {
   return txs;
 }
 
-if (IS_STAGING || LOCAL_DEV) {
+function seedDemo() {
   const seed = buildDemoSeed(APP_PUBKEY);
   for (const tx of seed) {
     if (LOCAL_DEV && mockApi.transactions) mockApi.transactions.push(tx);
@@ -213,13 +219,95 @@ const gameCache = createAppStateCache({
   handleRequest: game.handleRequest,
   onChainReset(newId, oldId) {
     console.log(`[lastwin] chain reset ${oldId} -> ${newId}, resetting game state`);
+    // Record the new chain id first, then reset (reset notifies, which
+    // schedules a save of the empty state under the new chain id).
+    gameStore.setChainId(newId);
     game.reset();
   },
   localDev: LOCAL_DEV,
   mockTransactions: LOCAL_DEV ? mockApi.transactions : null,
   nodeRpcUrl: NODE_RPC_URL,
 });
-gameCache.start();
+// gameCache.start() (backfill + live pollers) runs in boot() below, after the
+// saved snapshot has been restored, so restored seenTxIds make the backfill
+// skip everything already applied.
+//
+// That ordering makes the page-load gate (the cache's stream readiness,
+// which the dapp-loading overlay waits on) depend on the persistence step
+// finishing, so the whole step is raced against a hard budget below: a
+// stalled or wedged database can delay boot by at most that budget and
+// never blocks the game from starting (persistence just stays off for the
+// run, the same as a failed load).
+const PERSISTENCE_BOOT_BUDGET_MS = 8000;
+let persistenceGiveUp = false; // set when the budget lapses mid-step
+
+async function restoreFromStore() {
+  await gameStore.init(APP_PUBKEY);
+  const saved = await gameStore.load(APP_PUBKEY);
+  if (persistenceGiveUp) return; // budget lapsed mid-load: stay persistence-off
+  // Load succeeded (row or no row) — safe to save from now on. A load
+  // failure leaves persistence off for this run so a short chain
+  // rebuild can never overwrite a good snapshot.
+  persistenceOn = true;
+  if (saved && saved.data) {
+    // Compare chain ids so a fresh chain starts over instead of
+    // resuming a snapshot from the old one. Discovery failure keeps
+    // the snapshot (same behaviour as a same-id match).
+    const info = await Promise.race([
+      discoverChainInfo({}),
+      new Promise((resolve) => setTimeout(() => resolve({ chainId: null }), 5000)),
+    ]);
+    if (persistenceGiveUp) return; // never restore late — backfill may have started
+    const currentChainId = info && info.chainId;
+    if (currentChainId && saved.chainId && currentChainId !== saved.chainId) {
+      console.log(`[lastwin] saved state is from chain ${String(saved.chainId).slice(0, 16)}…, current is ${String(currentChainId).slice(0, 16)}…: rebuilding`);
+      gameStore.setChainId(currentChainId);
+    } else if (game.restoreSnapshot(saved.data)) {
+      gameStore.setChainId(currentChainId || saved.chainId);
+    } else {
+      console.log("[lastwin] saved state has an unknown format — rebuilding from chain");
+      gameStore.setChainId(currentChainId || saved.chainId);
+    }
+  }
+}
+
+async function boot() {
+  // 1. Restore the last saved snapshot (issue #19): updates/restarts used to
+  //    rebuild game state from the chain, and an incomplete explorer read
+  //    came out short — dropping round numbers, streaks and win history.
+  if (LOCAL_DEV || !gameStore.isConfigured()) {
+    console.log(`[lastwin] state persistence off (${LOCAL_DEV ? "local-dev" : "no DATABASE_URL"})`);
+  } else {
+    const result = await Promise.race([
+      restoreFromStore().then(
+        () => "done",
+        (e) => {
+          console.error("[lastwin] state persistence init failed — saving disabled this run:", e.message);
+          persistenceOn = false;
+          return "done";
+        },
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), PERSISTENCE_BOOT_BUDGET_MS)),
+    ]);
+    if (result === "timeout") {
+      persistenceGiveUp = true;
+      persistenceOn = false;
+      console.error(`[lastwin] state persistence step exceeded ${PERSISTENCE_BOOT_BUDGET_MS / 1000}s — saving disabled this run, starting from the chain`);
+    }
+  }
+
+  // 2. Staging / local-dev demo seed (idempotent via seenTxIds — restored
+  //    seenTxIds keep a re-seed from double-counting).
+  if (IS_STAGING || LOCAL_DEV) seedDemo();
+
+  // 3. Payout timer + chain plumbing. The backfill applies only txs not in
+  //    the restored seenTxIds — the ones that landed while the server was down.
+  game.start();
+  gameCache.start();
+  console.log(`[lastwin] boot complete (persistence ${persistenceOn ? "on" : "off"}, round ${game.state.roundNumber})`);
+}
+
+boot().catch((e) => console.error("[lastwin] boot error:", e.message));
 
 app.use((req, res, next) => {
   if (gameCache.handleRequest(req, res, req.path)) return;
@@ -419,7 +507,7 @@ app.get("*", (_req, res) => {
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   const timerMinutes = Math.round((LOCAL_DEV ? 120000 : TIMER_DURATION_MS) / 60000);
   console.log(`\nLast One Wins server running at http://localhost:${PORT}`);
   console.log(`  App pubkey:    ${APP_PUBKEY.slice(0, 24)}…`);
@@ -429,3 +517,16 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Payouts:       ${APP_SECRET_KEY ? "enabled" : "DISABLED (no APP_SECRET_KEY)"}`);
   console.log(`  Push:          ${pushEnabled ? "enabled" : "disabled (no VAPID keys)"}\n`);
 });
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+// Flush the last snapshot before exiting so a platform update never loses
+// the final state change (issue #19). Exits at most ~3s after the signal.
+async function shutdown(signal) {
+  console.log(`[lastwin] ${signal} received — flushing saved state…`);
+  const done = () => process.exit(0);
+  try { await gameStore.close(); } catch (_) {}
+  server.close(done);
+  setTimeout(done, 3000).unref();
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
