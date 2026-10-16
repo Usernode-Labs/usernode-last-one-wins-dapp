@@ -164,8 +164,9 @@ sidecar usernode build that exposes those endpoints.
   via `processTransaction` under `--local-dev`/`USERNODE_ENV=staging` so the
   new activity row and Pot Breakdown line are verifiable (no-op in production).
 - Win streak bonuses: a player who wins consecutive rounds earns an
-  operator-funded bonus on top of the full pot. Streaks are **derived,
-  not persisted** — `applyStreak()` recomputes `state.streaks` (pubkey →
+  operator-funded bonus on top of the full pot. Streaks are **derived from
+  the ordered payout sequence and restored from the saved snapshot** —
+  `applyStreak()` recomputes `state.streaks` (pubkey →
   `{ count, lastWonRound }`) and `state.currentStreak` from the ordered
   `payout` sequence inside `processTransaction`, guarded by the same
   `round >= state.roundNumber` check so replayed/duplicate payouts don't
@@ -183,6 +184,15 @@ sidecar usernode build that exposes those endpoints.
   mock bonus tx so the cycle is observable. `/__game/state` exposes
   `currentStreak`, `streakBonusMin`, `streakBonusPct`, and
   `streakBonusMaxPct` for the UI.
+- State persistence: the whole game state (`roundNumber`, pot, `pastRounds`,
+  streaks, win counts, usernames, `seenTxIds`) is saved to Postgres via
+  `lib/game-store.js` (table `lastwin_state`, keyed by `APP_PUBKEY`, 1s
+  debounce) and restored at startup in `server.js`'s `boot()`. Without a
+  snapshot (first start, or a chain-id mismatch) the game rebuilds from the
+  chain as before and then saves. If the store can't be read at boot, saving
+  stays off for that run so a short rebuild never overwrites a good snapshot.
+  Off in `--local-dev` (no `DATABASE_URL`). The `staging:private` table
+  comment keeps staging previews on their own empty copy.
 
 ## Parallel deploys + same APP_PUBKEY
 

@@ -46,6 +46,9 @@ function createLastOneWins(opts) {
   const localDev = !!opts.localDev;
   const mockTransactions = opts.mockTransactions || null;
   const pushStore = opts.pushStore || null;
+  // Called (debounced upstream) after every state change so the surrounding
+  // server can persist a snapshot; see exportSnapshot/restoreSnapshot below.
+  const onStateChange = typeof opts.onStateChange === "function" ? opts.onStateChange : null;
 
   const MOCK_TIMER_DURATION_MS = 120000;
 
@@ -93,11 +96,11 @@ function createLastOneWins(opts) {
     urgentNotified: false,  // true once the ≤60s push has been sent for this round
     isMegaRound: false,    // true when the current round is a Monday Mega Round
     megaSeedSent: false,   // guards against duplicate mega seed sends per round
-    // Win streaks (derived from the ordered payout sequence, not persisted).
+    // Win streaks (persisted via snapshot; re-derived from the payout
+    // sequence when no snapshot exists).
     streaks: new Map(),   // pubkey → { count, lastWonRound }
     currentStreak: null,  // { winner, count, lastRound } or null before any payout
-    // Total wins per player (derived from the payout sequence, not persisted).
-    // Powers the leaderboard. pubkey → { wins, lastWonRound, lastWonTs }.
+    // Total wins per player. Powers the leaderboard. pubkey → { wins, lastWonRound, lastWonTs }.
     winCounts: new Map(),
   };
 
@@ -105,6 +108,77 @@ function createLastOneWins(opts) {
   const usernames = new Map();
   const seenTxIds = new Set();
   let signerConfigured = false;
+
+  function notifyStateChange() {
+    if (!onStateChange) return;
+    try { onStateChange(); }
+    catch (e) { console.warn("[game] state-change notify failed:", e.message); }
+  }
+
+  // Serializable copy of everything needed to resume the game after a
+  // restart. Consumed by lib/game-store.js (Postgres) via server.js.
+  function exportSnapshot() {
+    return {
+      v: 1,
+      savedAt: Date.now(),
+      roundNumber: state.roundNumber,
+      potBalance: state.potBalance,
+      lastSender: state.lastSender,
+      lastEntryTs: state.lastEntryTs,
+      timerExpiresAt: state.timerExpiresAt,
+      entries: state.entries,
+      pastRounds: state.pastRounds,
+      urgentNotified: state.urgentNotified,
+      isMegaRound: state.isMegaRound,
+      megaSeedSent: state.megaSeedSent,
+      currentStreak: state.currentStreak,
+      streaks: [...state.streaks.entries()],
+      winCounts: [...state.winCounts.entries()],
+      usernames: [...usernames.entries()],
+      seenTxIds: [...seenTxIds],
+    };
+  }
+
+  // Restore a snapshot produced by exportSnapshot(). Unknown versions are
+  // rejected (returns false) so an old snapshot can't corrupt a new build;
+  // each field falls back to its current default when absent.
+  // payoutInProgress and signerConfigured are intentionally not restored.
+  function restoreSnapshot(snap) {
+    if (!snap || typeof snap !== "object" || snap.v !== 1) return false;
+    if (typeof snap.roundNumber === "number" && snap.roundNumber > 0) state.roundNumber = snap.roundNumber;
+    if (typeof snap.potBalance === "number") state.potBalance = snap.potBalance;
+    state.lastSender = typeof snap.lastSender === "string" ? snap.lastSender : null;
+    state.lastEntryTs = typeof snap.lastEntryTs === "number" ? snap.lastEntryTs : null;
+    state.timerExpiresAt = typeof snap.timerExpiresAt === "number" ? snap.timerExpiresAt : null;
+    if (Array.isArray(snap.entries)) state.entries = snap.entries;
+    if (Array.isArray(snap.pastRounds)) state.pastRounds = snap.pastRounds;
+    state.urgentNotified = !!snap.urgentNotified;
+    state.isMegaRound = !!snap.isMegaRound;
+    state.megaSeedSent = !!snap.megaSeedSent;
+    if (snap.currentStreak && typeof snap.currentStreak === "object" &&
+        typeof snap.currentStreak.winner === "string") {
+      state.currentStreak = {
+        winner: snap.currentStreak.winner,
+        count: snap.currentStreak.count || 1,
+        lastRound: snap.currentStreak.lastRound || 0,
+      };
+    }
+    if (Array.isArray(snap.streaks)) state.streaks = new Map(snap.streaks);
+    if (Array.isArray(snap.winCounts)) state.winCounts = new Map(snap.winCounts);
+    if (Array.isArray(snap.usernames)) {
+      for (const [pubkey, entry] of snap.usernames) {
+        if (pubkey && entry && typeof entry.name === "string") {
+          usernames.set(pubkey, { name: entry.name, ts: entry.ts || 0 });
+        }
+      }
+    }
+    if (Array.isArray(snap.seenTxIds)) {
+      for (const id of snap.seenTxIds) seenTxIds.add(id);
+    }
+    console.log(`[game] snapshot restored: round=${state.roundNumber}, pot=${state.potBalance}, ` +
+      `${seenTxIds.size} tx(s) seen, ${state.pastRounds.length} past round(s)`);
+    return true;
+  }
 
   function getTimerDuration() {
     return localDev ? MOCK_TIMER_DURATION_MS : timerDurationMs;
@@ -238,6 +312,9 @@ function createLastOneWins(opts) {
     if (!tx || !tx.id || !tx.from || !tx.to) return;
     if (seenTxIds.has(tx.id)) return;
     seenTxIds.add(tx.id);
+    // Notify after this synchronous run completes so the snapshot includes
+    // whatever processing this tx performs.
+    Promise.resolve().then(notifyStateChange);
 
     // Accept txs sent TO the app (entries) or FROM the app (payouts)
     if (tx.to !== appPubkey && tx.from !== appPubkey) return;
@@ -524,6 +601,7 @@ function createLastOneWins(opts) {
     const remaining = getTimeRemaining();
     if (pushStore && !state.urgentNotified && remaining != null && remaining > 0 && remaining <= 60000) {
       state.urgentNotified = true;
+      notifyStateChange();
       pushStore.sendPush(pushStore.getAll(), {
         title: "⏰ Hurry!", body: "Only " + Math.ceil(remaining / 1000) + "s left — enter now to win " + state.potBalance + " tokens!", tag: "timer-urgent",
       });
@@ -577,6 +655,7 @@ function createLastOneWins(opts) {
       if (MEGA_ROUND_ENABLED && isMondayUTC() && !state.megaSeedSent) {
         state.isMegaRound = true;
         state.megaSeedSent = true;
+        notifyStateChange();
         const seedTx = {
           id: crypto.randomUUID(),
           from_pubkey: appPubkey,
@@ -625,6 +704,7 @@ function createLastOneWins(opts) {
         if (MEGA_ROUND_ENABLED && isMondayUTC() && !state.megaSeedSent) {
           state.isMegaRound = true;
           state.megaSeedSent = true;
+          notifyStateChange();
           await sendMegaSeed(state.roundNumber);
         }
         // Streak bonus is best-effort and runs after the round has advanced;
@@ -683,6 +763,7 @@ function createLastOneWins(opts) {
     state.currentStreak = null;
     state.winCounts.clear();
     signerConfigured = false;
+    notifyStateChange();
     console.log("[game] state reset (chain restart detected)");
   }
 
@@ -695,6 +776,8 @@ function createLastOneWins(opts) {
     checkPayout,
     start,
     reset,
+    exportSnapshot,
+    restoreSnapshot,
     appPubkey,
   };
 }
